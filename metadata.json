@@ -1,0 +1,6 @@
+{
+  "name": "متجر إلكتروني مع نظام رفع الصور الدائم لـ Vercel Blob",
+  "description": "متجر إلكتروني متكامل مع لوحة تحكم الإدارة لرفع صور المنتجات مباشرة من الجهاز وحفظها على Vercel Blob لتظهر فورا للزبائن دون الحاجة لـ GitHub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
