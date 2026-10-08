@@ -197,7 +197,7 @@ app.get(['/api/blob/status', '/api/blob-status'], (req: Request, res: Response) 
 // -------------------------------------------------------------
 app.post(
   '/api/upload',
-  upload.array('images', 10),
+  upload.any(),
   async (req: Request, res: Response) => {
     const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
     const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
@@ -251,23 +251,31 @@ app.post(
 // 3. API: Client Upload Handler (@vercel/blob/client handleUpload)
 // -------------------------------------------------------------
 app.post('/api/blob-upload', async (req: Request, res: Response) => {
-  const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-
-  if (!token) {
-    return res.status(500).json({
-      error: 'BLOB_READ_WRITE_TOKEN is missing for client-upload generation.',
-    });
-  }
+  const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  let token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
 
   try {
     const body = req.body as HandleUploadBody;
+
+    if (!token && body?.payload && typeof body.payload === 'object') {
+      try {
+        const clientPayloadStr = (body.payload as any).clientPayload;
+        if (clientPayloadStr) {
+          const parsed = JSON.parse(clientPayloadStr);
+          if (parsed?.token) {
+            token = parsed.token;
+          }
+        }
+      } catch {}
+    }
+
     const jsonResponse = await handleUpload({
       body,
       request: req,
-      token: token.trim(),
+      token,
       onBeforeGenerateToken: async (pathname) => {
         return {
-          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'],
           tokenPayload: JSON.stringify({ pathname }),
         };
       },
@@ -276,7 +284,7 @@ app.post('/api/blob-upload', async (req: Request, res: Response) => {
 
     return res.status(200).json(jsonResponse);
   } catch (error: any) {
-    return res.status(400).json({ error: error.message || 'Client upload failed' });
+    return res.status(400).json({ error: error.message || 'Client upload token generation failed' });
   }
 });
 

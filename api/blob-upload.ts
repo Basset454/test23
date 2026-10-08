@@ -14,10 +14,23 @@ export default async function handler(request: any, response: any) {
   }
 
   const explicitToken = (request.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-  const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
+  let token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
 
   try {
     const body = (request.body || {}) as HandleUploadBody;
+
+    // Check if client provided custom token payload
+    if (!token && body?.payload && typeof body.payload === 'object') {
+      try {
+        const clientPayloadStr = (body.payload as any).clientPayload;
+        if (clientPayloadStr) {
+          const parsed = JSON.parse(clientPayloadStr);
+          if (parsed?.token) {
+            token = parsed.token;
+          }
+        }
+      } catch {}
+    }
 
     const jsonResponse = await handleUpload({
       body,
@@ -35,6 +48,8 @@ export default async function handler(request: any, response: any) {
     return response.status(200).json(jsonResponse);
   } catch (error: any) {
     console.error('Error in blob-upload handler:', error);
-    return response.status(400).json({ error: error.message || 'Client upload token generation failed' });
+    return response.status(400).json({
+      error: `Client upload token generation failed: ${error.message || 'Unknown error'}. Ensure test23-blob is attached to the Vercel project.`,
+    });
   }
 }

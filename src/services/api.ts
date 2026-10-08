@@ -1,4 +1,5 @@
 import { Product, ProductImage, BlobStatus } from '../types';
+import { upload } from '@vercel/blob/client';
 
 const ADMIN_BLOB_TOKEN_KEY = 'trust_admin_blob_token';
 const ADMIN_SESSION_KEY = 'trust_admin_session';
@@ -165,61 +166,102 @@ export async function uploadImageFiles(
   files: File[],
   onProgress?: (progress: number) => void
 ): Promise<ProductImage[]> {
-  const token = getCustomBlobToken();
+  const customToken = getCustomBlobToken();
   const uploadedResults: ProductImage[] = [];
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    onProgress?.(Math.round(((i + 0.3) / files.length) * 100));
+    onProgress?.(Math.round(((i + 0.1) / files.length) * 100));
 
-    // Try Vercel Serverless / Express binary upload endpoint
-    const url = `/api/upload?filename=${encodeURIComponent(file.name)}`;
-    const headers: Record<string, string> = {
-      'content-type': file.type || 'image/jpeg',
-    };
-    if (token) {
-      headers['x-blob-token'] = token;
+    const cleanFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const pathname = `products/${Date.now()}-${cleanFilename}`;
+
+    let uploadedBlob: { url: string; pathname?: string; size?: number } | null = null;
+    let lastError: Error | null = null;
+
+    // 1. Try official client upload flow (@vercel/blob/client)
+    try {
+      const blob = await upload(pathname, file, {
+        access: 'public',
+        handleUploadUrl: '/api/blob-upload',
+        clientPayload: JSON.stringify({ token: customToken || undefined }),
+        onUploadProgress: ({ percentage }) => {
+          onProgress?.(Math.round(((i + percentage / 100) / files.length) * 100));
+        },
+      });
+
+      uploadedBlob = {
+        url: blob.url,
+        pathname: blob.pathname,
+        size: file.size,
+      };
+    } catch (clientErr: any) {
+      console.warn('Official @vercel/blob/client direct upload error, attempting server upload:', clientErr);
+      lastError = clientErr;
     }
 
-    // Send multipart FormData or raw body
-    const formData = new FormData();
-    formData.append('images', file);
+    // 2. If client-side token flow was not available, call server upload endpoint (/api/upload)
+    if (!uploadedBlob) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('images', file);
 
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      headers: token ? { 'x-blob-token': token } : {},
-      body: formData,
-    });
+        const headers: Record<string, string> = {};
+        if (customToken) {
+          headers['x-blob-token'] = customToken;
+        }
 
-    onProgress?.(Math.round(((i + 0.9) / files.length) * 100));
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      const detailedMessage =
-        errData.error ||
-        `Vercel Blob upload failed with status ${res.status}. Verify that BLOB_READ_WRITE_TOKEN is configured in Vercel project settings for test23-blob.`;
-      
-      // CRITICAL: DO NOT FALL BACK TO LOCAL STORAGE OR FAKE URL!
-      throw new Error(detailedMessage);
-    }
-
-    const data = await res.json();
-    if (!data.files || data.files.length === 0) {
-      if (data.url) {
-        uploadedResults.push({
-          id: `img-${Date.now()}-${i}`,
-          url: data.url,
-          pathname: data.pathname,
-          name: file.name,
-          size: file.size,
-          isCover: i === 0,
-          uploadedAt: new Date().toISOString(),
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers,
+          body: formData,
         });
-      } else {
-        throw new Error('Upload succeeded on server but no Blob URL was returned by Vercel.');
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(
+            errData.error ||
+            `Server upload failed with status ${res.status}. ${lastError?.message || ''}`
+          );
+        }
+
+        const data = await res.json();
+        if (data.url) {
+          uploadedBlob = {
+            url: data.url,
+            pathname: data.pathname,
+            size: data.size || file.size,
+          };
+        } else if (Array.isArray(data.files) && data.files.length > 0) {
+          uploadedBlob = {
+            url: data.files[0].url,
+            pathname: data.files[0].pathname,
+            size: data.files[0].size || file.size,
+          };
+        } else {
+          throw new Error('Upload completed on server but no Blob URL was returned.');
+        }
+      } catch (serverErr: any) {
+        // STRICT REQUIREMENT: DO NOT FALL BACK TO LOCAL STORAGE OR FAKE BASE64!
+        console.error('All Vercel Blob upload methods failed:', serverErr);
+        throw new Error(
+          serverErr.message ||
+          'Failed to upload image to Vercel Blob store (test23-blob). Please verify that test23-blob is connected.'
+        );
       }
-    } else {
-      uploadedResults.push(...data.files);
+    }
+
+    if (uploadedBlob) {
+      uploadedResults.push({
+        id: `img-${Date.now()}-${i}`,
+        url: uploadedBlob.url,
+        pathname: uploadedBlob.pathname,
+        name: file.name,
+        size: uploadedBlob.size || file.size,
+        isCover: i === 0,
+        uploadedAt: new Date().toISOString(),
+      });
     }
   }
 
