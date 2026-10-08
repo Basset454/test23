@@ -8,6 +8,25 @@ export const config = {
   },
 };
 
+function sanitizeBlobToken(rawToken?: string): string | undefined {
+  if (!rawToken || typeof rawToken !== 'string') return undefined;
+  const trimmed = rawToken.trim().replace(/^['"]|['"]$/g, '');
+  if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
+    return undefined;
+  }
+  if (!trimmed.startsWith('vercel_blob_rw_')) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function neutralizeInvalidBlobEnv() {
+  const envToken = process.env.BLOB_READ_WRITE_TOKEN;
+  if (envToken && (envToken.startsWith('postgres://') || envToken.startsWith('postgresql://'))) {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+  }
+}
+
 function parseNodeMultipart(req: any): Promise<{ buffer: Buffer; filename: string; mimetype: string }> {
   return new Promise((resolve, reject) => {
     const bb = busboy({ headers: req.headers });
@@ -51,6 +70,8 @@ function readNodeStream(req: any): Promise<Buffer> {
 }
 
 export default async function handler(req: any, res: any) {
+  neutralizeInvalidBlobEnv();
+
   // CORS headers
   if (res?.setHeader) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -66,7 +87,7 @@ export default async function handler(req: any, res: any) {
 
     try {
       const explicitToken = req.headers.get('x-blob-token') || process.env.BLOB_READ_WRITE_TOKEN;
-      const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
+      const token = sanitizeBlobToken(explicitToken);
 
       const form = await req.formData();
       const possibleFile = form.get('file') || form.get('image') || form.get('images');
@@ -114,7 +135,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-  const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
+  const token = sanitizeBlobToken(explicitToken);
 
   try {
     const rawContentType = (req.headers['content-type'] as string) || '';
@@ -123,13 +144,11 @@ export default async function handler(req: any, res: any) {
     let contentType: string;
 
     if (rawContentType.includes('multipart/form-data')) {
-      // Extract pure file bytes without multipart headers
       const parsed = await parseNodeMultipart(req);
       fileBuffer = parsed.buffer;
       filename = parsed.filename;
       contentType = parsed.mimetype;
     } else {
-      // Raw binary stream (body is pure image file)
       const rawFilename = (req.query?.filename as string) || `furniture-${Date.now()}.jpg`;
       filename = rawFilename;
       contentType = rawContentType || 'image/jpeg';
@@ -143,7 +162,6 @@ export default async function handler(req: any, res: any) {
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const pathname = `products/${Date.now()}-${cleanFilename}`;
 
-    // Pass the pure Buffer directly to put() - ensuring valid JPEG/PNG signatures
     const blob = await put(pathname, fileBuffer, {
       access: 'public',
       token,

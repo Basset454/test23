@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { Product } from '../src/types';
-import { INITIAL_PRODUCTS } from '../src/data/initialProducts';
 import {
+  Product,
+  INITIAL_PRODUCTS,
   getDatabaseUrl,
   getNeonProducts,
   insertNeonProduct,
@@ -13,7 +13,7 @@ import {
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const LOCAL_PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
 
-// Local file helper for development fallback only (when Neon connection string is not yet set)
+// Local file helper for development fallback only (when Neon connection string is not set)
 function loadLocalFileProducts(): Product[] {
   try {
     if (fs.existsSync(LOCAL_PRODUCTS_FILE)) {
@@ -80,13 +80,21 @@ export default async function handler(req: any, res: any) {
       const includeUnpublished = req.query.all === 'true' || req.query.admin === 'true';
 
       if (isNeonConfigured) {
-        const neonProducts = await getNeonProducts(includeUnpublished);
-        if (neonProducts !== null) {
-          return res.status(200).json({ products: neonProducts, source: 'neon_postgres' });
+        try {
+          const neonProducts = await getNeonProducts(includeUnpublished);
+          if (neonProducts !== null) {
+            return res.status(200).json({ products: neonProducts, source: 'neon_postgres' });
+          }
+        } catch (neonErr: any) {
+          console.error('Neon query failure:', neonErr.message || neonErr);
+          // Return safe diagnostic error without exposing connection secrets
+          return res.status(500).json({
+            error: 'Failed to fetch products from Neon Postgres database. Please verify database connectivity.',
+          });
         }
       }
 
-      // Local dev fallback
+      // Local dev fallback only when no database URL is configured
       const localProducts = loadLocalFileProducts();
       const result = includeUnpublished
         ? localProducts
@@ -115,9 +123,16 @@ export default async function handler(req: any, res: any) {
       const productToInsert = normalizeProduct(body);
 
       if (isNeonConfigured) {
-        const inserted = await insertNeonProduct(productToInsert);
-        if (inserted) {
-          return res.status(201).json({ success: true, product: inserted, source: 'neon_postgres' });
+        try {
+          const inserted = await insertNeonProduct(productToInsert);
+          if (inserted) {
+            return res.status(201).json({ success: true, product: inserted, source: 'neon_postgres' });
+          }
+        } catch (neonErr: any) {
+          console.error('Neon insert failure:', neonErr.message || neonErr);
+          return res.status(500).json({
+            error: 'Failed to save product to Neon Postgres database.',
+          });
         }
       }
 
@@ -138,9 +153,16 @@ export default async function handler(req: any, res: any) {
       }
 
       if (isNeonConfigured) {
-        const updated = await updateNeonProduct(productId, body);
-        if (updated) {
-          return res.status(200).json({ success: true, product: updated, source: 'neon_postgres' });
+        try {
+          const updated = await updateNeonProduct(productId, body);
+          if (updated) {
+            return res.status(200).json({ success: true, product: updated, source: 'neon_postgres' });
+          }
+        } catch (neonErr: any) {
+          console.error('Neon update failure:', neonErr.message || neonErr);
+          return res.status(500).json({
+            error: 'Failed to update product in Neon Postgres database.',
+          });
         }
       }
 
@@ -174,13 +196,20 @@ export default async function handler(req: any, res: any) {
       }
 
       if (isNeonConfigured) {
-        await deleteNeonProduct(productId);
-        return res.status(200).json({
-          success: true,
-          message: 'Product deleted from Neon database successfully',
-          id: productId,
-          source: 'neon_postgres',
-        });
+        try {
+          await deleteNeonProduct(productId);
+          return res.status(200).json({
+            success: true,
+            message: 'Product deleted from Neon database successfully',
+            id: productId,
+            source: 'neon_postgres',
+          });
+        } catch (neonErr: any) {
+          console.error('Neon delete failure:', neonErr.message || neonErr);
+          return res.status(500).json({
+            error: 'Failed to delete product from Neon Postgres database.',
+          });
+        }
       }
 
       // Local dev fallback
@@ -197,7 +226,7 @@ export default async function handler(req: any, res: any) {
 
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (error: any) {
-    console.error('Products API error with Neon Postgres:', error);
-    return res.status(500).json({ error: error.message || 'Database error occurred' });
+    console.error('Products API unhandled error:', error?.message || error);
+    return res.status(500).json({ error: 'Database request failed. Please check server logs.' });
   }
 }

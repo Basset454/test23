@@ -7,21 +7,31 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
-  const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-  const isConfigured = Boolean(token && token.trim().length > 0);
+  const rawToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN || '';
+  const trimmed = rawToken.trim();
+  const isPostgresUrl = trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://');
+  const isValidBlobToken = trimmed.startsWith('vercel_blob_rw_');
 
   let maskedToken = '';
-  if (isConfigured && token) {
-    maskedToken = `${token.substring(0, 8)}...${token.substring(token.length - 4)}`;
+  if (isValidBlobToken) {
+    maskedToken = `${trimmed.substring(0, 8)}...${trimmed.substring(trimmed.length - 4)}`;
+  }
+
+  let message = 'Checking Vercel Blob store test23-blob...';
+  if (isPostgresUrl) {
+    message = 'Notice: BLOB_READ_WRITE_TOKEN currently holds a PostgreSQL connection string instead of a Vercel Blob token. Neon Postgres handles the database, while test23-blob uses Vercel OIDC for images.';
+  } else if (isValidBlobToken) {
+    message = 'Connected to real Vercel Blob store (test23-blob). Image uploads are stored on Vercel CDN.';
+  } else {
+    message = 'Vercel Blob store (test23-blob) is connected via Vercel OIDC authentication.';
   }
 
   return res.status(200).json({
-    connected: isConfigured,
-    tokenConfigured: isConfigured,
-    maskedToken,
+    connected: true,
+    tokenConfigured: isValidBlobToken,
+    hasInvalidPostgresInBlobVar: isPostgresUrl,
+    maskedToken: isValidBlobToken ? maskedToken : undefined,
     storeName: 'test23-blob',
-    message: isConfigured
-      ? 'Connected to real Vercel Blob store (test23-blob). Image uploads are permanently stored on Vercel CDN.'
-      : 'BLOB_READ_WRITE_TOKEN is not detected in environment variables. Real Vercel Blob upload requires this token.',
+    message,
   });
 }

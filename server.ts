@@ -17,6 +17,27 @@ import {
 
 dotenv.config();
 
+// If BLOB_READ_WRITE_TOKEN was mistakenly set to a Postgres URL, neutralize it
+if (
+  process.env.BLOB_READ_WRITE_TOKEN &&
+  (process.env.BLOB_READ_WRITE_TOKEN.startsWith('postgres://') ||
+    process.env.BLOB_READ_WRITE_TOKEN.startsWith('postgresql://'))
+) {
+  delete process.env.BLOB_READ_WRITE_TOKEN;
+}
+
+function sanitizeBlobToken(rawToken?: string): string | undefined {
+  if (!rawToken || typeof rawToken !== 'string') return undefined;
+  const trimmed = rawToken.trim().replace(/^['"]|['"]$/g, '');
+  if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
+    return undefined;
+  }
+  if (!trimmed.startsWith('vercel_blob_rw_')) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

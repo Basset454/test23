@@ -33,29 +33,33 @@ export function isAdminAuthenticated(): boolean {
 }
 
 export function getCustomBlobToken(): string {
-  return localStorage.getItem(ADMIN_BLOB_TOKEN_KEY) || '';
+  const val = localStorage.getItem(ADMIN_BLOB_TOKEN_KEY) || '';
+  const trimmed = val.trim();
+  // Clear any invalid postgres connection strings mistakenly stored in localStorage
+  if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://') || (!trimmed.startsWith('vercel_blob_rw_') && trimmed.length > 0)) {
+    localStorage.removeItem(ADMIN_BLOB_TOKEN_KEY);
+    return '';
+  }
+  return trimmed;
 }
 
 export function setCustomBlobToken(token: string): void {
-  if (token && token.trim()) {
-    localStorage.setItem(ADMIN_BLOB_TOKEN_KEY, token.trim());
+  const trimmed = (token || '').trim();
+  if (trimmed && trimmed.startsWith('vercel_blob_rw_')) {
+    localStorage.setItem(ADMIN_BLOB_TOKEN_KEY, trimmed);
   } else {
     localStorage.removeItem(ADMIN_BLOB_TOKEN_KEY);
   }
 }
 
 // -------------------------------------------------------------
-// Real Server Database APIs (NO localStorage as source of truth)
+// Real Server Database APIs (Powered by Neon Postgres)
 // -------------------------------------------------------------
 export async function getProducts(forAdmin = false): Promise<Product[]> {
-  const token = getCustomBlobToken();
   const sessionToken = getAdminToken();
   const url = forAdmin ? '/api/products?admin=true' : '/api/products';
   
   const headers: Record<string, string> = {};
-  if (token) {
-    headers['x-blob-token'] = token;
-  }
   if (sessionToken) {
     headers['Authorization'] = `Bearer ${sessionToken}`;
   }
@@ -71,14 +75,10 @@ export async function getProducts(forAdmin = false): Promise<Product[]> {
 }
 
 export async function createProduct(product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
-  const token = getCustomBlobToken();
   const sessionToken = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (token) {
-    headers['x-blob-token'] = token;
-  }
   if (sessionToken) {
     headers['Authorization'] = `Bearer ${sessionToken}`;
   }
@@ -99,14 +99,10 @@ export async function createProduct(product: Omit<Product, 'id' | 'createdAt' | 
 }
 
 export async function updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
-  const token = getCustomBlobToken();
   const sessionToken = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (token) {
-    headers['x-blob-token'] = token;
-  }
   if (sessionToken) {
     headers['Authorization'] = `Bearer ${sessionToken}`;
   }
@@ -127,12 +123,8 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
 }
 
 export async function deleteProduct(id: string): Promise<boolean> {
-  const token = getCustomBlobToken();
   const sessionToken = getAdminToken();
   const headers: Record<string, string> = {};
-  if (token) {
-    headers['x-blob-token'] = token;
-  }
   if (sessionToken) {
     headers['Authorization'] = `Bearer ${sessionToken}`;
   }
