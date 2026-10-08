@@ -134,9 +134,46 @@ function saveProducts(products: any[]) {
 }
 
 // -------------------------------------------------------------
-// 1. API: Vercel Blob Status
+// 1. API: Admin Authentication
 // -------------------------------------------------------------
-app.get('/api/blob/status', (req: Request, res: Response) => {
+app.post('/api/admin/login', (req: Request, res: Response) => {
+  const { password } = req.body || {};
+  const serverPassword = process.env.ADMIN_PASSWORD || 'trust2026';
+
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required' });
+  }
+
+  if (password === serverPassword) {
+    const sessionToken = `trust_sess_${Buffer.from(Date.now().toString()).toString('base64')}_${Math.random().toString(36).slice(2, 10)}`;
+    return res.status(200).json({
+      success: true,
+      token: sessionToken,
+      message: 'Authenticated successfully',
+    });
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: 'Invalid admin password',
+  });
+});
+
+app.get('/api/admin/verify', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  if (token && token.startsWith('trust_sess_')) {
+    return res.status(200).json({ valid: true });
+  }
+
+  return res.status(401).json({ valid: false, error: 'Unauthorized' });
+});
+
+// -------------------------------------------------------------
+// 2. API: Vercel Blob Status
+// -------------------------------------------------------------
+app.get(['/api/blob/status', '/api/blob-status'], (req: Request, res: Response) => {
   const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
   const isConfigured = Boolean(token && token.trim().length > 0);
   let masked = '';
@@ -151,27 +188,19 @@ app.get('/api/blob/status', (req: Request, res: Response) => {
     storeName: 'test23-blob',
     message: isConfigured
       ? 'Connected to real Vercel Blob store (test23-blob). Real CDN URLs will be generated.'
-      : 'BLOB_READ_WRITE_TOKEN is missing. Please set BLOB_READ_WRITE_TOKEN in your environment or admin settings.',
+      : 'BLOB_READ_WRITE_TOKEN or Vercel OIDC provides storage in production.',
   });
 });
 
 // -------------------------------------------------------------
-// 2. API: Upload Image to Vercel Blob (NO FAKE / LOCAL FALLBACK)
+// 3. API: Upload Image to Vercel Blob (NO FAKE / LOCAL FALLBACK)
 // -------------------------------------------------------------
-// Route supports both binary body stream and multipart upload
 app.post(
   '/api/upload',
   upload.array('images', 10),
   async (req: Request, res: Response) => {
-    const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-
-    if (!token || token.trim().length === 0) {
-      return res.status(500).json({
-        error:
-          'BLOB_READ_WRITE_TOKEN is not configured! Real Vercel Blob upload requires this token. Please make sure the test23-blob store is attached.',
-        code: 'MISSING_BLOB_TOKEN',
-      });
-    }
+    const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+    const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
 
     try {
       const files = req.files as Express.Multer.File[];
@@ -189,7 +218,7 @@ app.post(
         // Call real @vercel/blob put()
         const blob = await put(filename, file.buffer, {
           access: 'public',
-          token: token.trim(),
+          token: token ? token.trim() : undefined,
           contentType: file.mimetype,
         });
 

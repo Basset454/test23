@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Lock, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Lock, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
+import { adminLogin } from '../services/api';
 
 interface AdminLoginProps {
   onLoginSuccess: () => void;
@@ -8,16 +9,26 @@ interface AdminLoginProps {
 export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simple admin authentication for test23 experiment
-    if (password === 'admin' || password === 'admin123' || password === 'trust2026') {
-      setError(null);
-      sessionStorage.setItem('trust_admin_authenticated', 'true');
+    if (!password.trim()) {
+      setError('Please enter the admin password.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Calls server-side authentication endpoint (/api/admin/login)
+      await adminLogin(password);
       onLoginSuccess();
-    } else {
-      setError('Invalid admin passcode. (Hint: use admin or trust2026)');
+    } catch (err: any) {
+      setError(err.message || 'Invalid admin credentials');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -33,7 +44,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
             Admin Authentication
           </h1>
           <p className="text-xs text-stone-500">
-            Protected area for managing Trust Furniture products and Vercel Blob uploads
+            Protected area for Trust Furniture catalog and Vercel Blob storage
           </p>
         </div>
 
@@ -47,38 +58,45 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
 
           <div>
             <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
-              Admin Passcode
+              Admin Password
             </label>
             <input
               type="password"
               autoFocus
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter passcode..."
+              placeholder="Enter password..."
               className="w-full px-4 py-3 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 text-white font-medium text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            disabled={loading}
+            className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 text-white font-medium text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            <span>Log in to Admin Panel</span>
-            <ArrowRight className="w-4 h-4" />
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <span>Log in to Admin Panel</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </button>
         </form>
 
         <div className="pt-4 border-t border-stone-100 flex items-center justify-between text-xs text-stone-400">
           <span className="flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            Independent Admin Portal
+            Server Authenticated
           </span>
           <button
             type="button"
             onClick={() => setPassword('trust2026')}
             className="text-stone-500 hover:underline cursor-pointer"
           >
-            Auto-fill passcode
+            Default: trust2026
           </button>
         </div>
 

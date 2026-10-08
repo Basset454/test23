@@ -11,11 +11,13 @@ export interface ProductImage {
 export interface Product {
   id: string;
   name: string;
-  description: string;
   price: number;
+  description: string;
   category: string;
   images: ProductImage[];
+  coverImageUrl: string;
   isPublished: boolean;
+  isFeatured: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -8,6 +8,8 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 480,
     category: 'Living Room',
     isPublished: true,
+    isFeatured: true,
+    coverImageUrl: 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?w=1000&auto=format&fit=crop&q=80',
     images: [
       {
         id: 'img-f1-1',
@@ -34,6 +36,8 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 920,
     category: 'Dining Room',
     isPublished: true,
+    isFeatured: false,
+    coverImageUrl: 'https://images.unsplash.com/photo-1615066390971-03e4e1c36ddf?w=1000&auto=format&fit=crop&q=80',
     images: [
       {
         id: 'img-f2-1',
@@ -53,6 +57,8 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 1650,
     category: 'Living Room',
     isPublished: true,
+    isFeatured: true,
+    coverImageUrl: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=1000&auto=format&fit=crop&q=80',
     images: [
       {
         id: 'img-f3-1',
@@ -72,6 +78,8 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 680,
     category: 'Office',
     isPublished: true,
+    isFeatured: false,
+    coverImageUrl: 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=1000&auto=format&fit=crop&q=80',
     images: [
       {
         id: 'img-f4-1',

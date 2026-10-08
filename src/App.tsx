@@ -6,7 +6,9 @@ import {
   updateProduct, 
   deleteProduct, 
   getBlobStatus, 
-  resetProductsToInitial 
+  resetProductsToInitial,
+  isAdminAuthenticated,
+  adminLogout
 } from './services/api';
 import { CustomerNavbar } from './components/CustomerNavbar';
 import { CustomerStore } from './components/CustomerStore';
@@ -16,7 +18,9 @@ import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [isAdminRoute, setIsAdminRoute] = useState(false);
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [adminSubpath, setAdminSubpath] = useState('/admin/products');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [blobStatus, setBlobStatus] = useState<BlobStatus | null>(null);
@@ -27,35 +31,47 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Route detection (/admin or #admin)
+  // Synchronize route from browser location
+  const syncRoute = () => {
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+
+    const isAdmin = path.startsWith('/admin') || hash.startsWith('#admin');
+    setIsAdminRoute(isAdmin);
+
+    if (isAdmin) {
+      let sub = path.startsWith('/admin') ? path : hash.replace('#', '/');
+      if (sub === '/admin' || sub === '/admin/') {
+        sub = '/admin/products';
+      }
+      setAdminSubpath(sub);
+      setIsAuthenticated(isAdminAuthenticated());
+    }
+  };
+
   useEffect(() => {
-    const checkRoute = () => {
-      const pathname = window.location.pathname;
-      const hash = window.location.hash;
-      const isAdmin = pathname.includes('/admin') || hash === '#admin';
-      setIsAdminRoute(isAdmin);
-
-      const isAuthed = sessionStorage.getItem('trust_admin_authenticated') === 'true';
-      setIsAdminAuthenticated(isAuthed);
-    };
-
-    checkRoute();
-    window.addEventListener('popstate', checkRoute);
-    window.addEventListener('hashchange', checkRoute);
+    syncRoute();
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('hashchange', syncRoute);
     return () => {
-      window.removeEventListener('popstate', checkRoute);
-      window.removeEventListener('hashchange', checkRoute);
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('hashchange', syncRoute);
     };
   }, []);
 
-  // Fetch products from persistent database API
+  const navigateAdmin = (path: string) => {
+    window.history.pushState({}, '', path);
+    setAdminSubpath(path);
+  };
+
+  // Fetch products from server database
   const refreshProducts = async (forAdmin?: boolean) => {
     try {
       const data = await getProducts(forAdmin ?? isAdminRoute);
       setProducts(data);
     } catch (err: any) {
-      console.error('Failed to load products from server:', err);
-      showToast(err.message || 'Error fetching products from database', 'error');
+      console.error('Failed to load products from server database:', err);
+      showToast(err.message || 'Error fetching products from server', 'error');
     }
   };
 
@@ -77,27 +93,27 @@ export default function App() {
     init();
   }, [isAdminRoute]);
 
-  // Admin CRUD actions
+  // Admin Actions
   const handleAddProduct = async (newProduct: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => {
     const created = await createProduct(newProduct);
     setProducts((prev) => [created, ...prev]);
-    showToast(`Product "${created.name}" saved to database successfully.`);
+    showToast(`Product "${created.name}" created and saved to database.`);
   };
 
   const handleUpdateProduct = async (id: string, updates: Partial<Product>) => {
     const updated = await updateProduct(id, updates);
     setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, ...updated } : p)));
-    showToast(`Product updated successfully.`);
+    showToast('Product updated successfully.');
   };
 
   const handleDeleteProduct = async (id: string) => {
     await deleteProduct(id);
     setProducts((prev) => prev.filter((p) => p.id !== id));
-    showToast(`Product deleted from database.`, 'success');
+    showToast('Product deleted from database.', 'success');
   };
 
   const handleResetProducts = async () => {
-    if (window.confirm('Reset all catalog items to sample furniture products?')) {
+    if (window.confirm('Reset catalog items to sample furniture products?')) {
       const resetList = await resetProductsToInitial();
       setProducts(resetList);
       showToast('Catalog restored to default furniture collection.');
@@ -105,10 +121,8 @@ export default function App() {
   };
 
   const handleAdminLogout = () => {
-    sessionStorage.removeItem('trust_admin_authenticated');
-    setIsAdminAuthenticated(false);
-    // Redirect back to home
-    window.location.hash = '';
+    adminLogout();
+    setIsAuthenticated(false);
     window.history.pushState({}, '', '/');
     setIsAdminRoute(false);
   };
@@ -116,7 +130,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans antialiased flex flex-col justify-between selection:bg-stone-900 selection:text-white">
       
-      {/* Toast Notification */}
+      {/* Toast Feedback */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom duration-200">
           <div
@@ -136,21 +150,24 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content Area */}
+      {/* Main View Router */}
       <div>
         {isAdminRoute ? (
           // ==================== INDEPENDENT ADMIN PORTAL (/admin) ====================
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            {!isAdminAuthenticated ? (
+            {!isAuthenticated ? (
               <AdminLogin
                 onLoginSuccess={() => {
-                  setIsAdminAuthenticated(true);
+                  setIsAuthenticated(true);
                   refreshProducts(true);
+                  navigateAdmin('/admin/products');
                 }}
               />
             ) : (
               <AdminPanel
                 products={products}
+                currentAdminSubpath={adminSubpath}
+                navigateAdmin={navigateAdmin}
                 onAddProduct={handleAddProduct}
                 onUpdateProduct={handleUpdateProduct}
                 onDeleteProduct={handleDeleteProduct}
@@ -163,7 +180,7 @@ export default function App() {
           </div>
         ) : (
           // ==================== CUSTOMER STOREFRONT (/) ====================
-          // STRICT RULE: No admin link/button anywhere in the customer-facing website
+          // STRICT RULE: No admin link/button anywhere in customer UI
           <>
             <CustomerNavbar />
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">

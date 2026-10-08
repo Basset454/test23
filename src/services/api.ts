@@ -1,6 +1,35 @@
 import { Product, ProductImage, BlobStatus } from '../types';
 
 const ADMIN_BLOB_TOKEN_KEY = 'trust_admin_blob_token';
+const ADMIN_SESSION_KEY = 'trust_admin_session';
+
+export function getAdminToken(): string | null {
+  return sessionStorage.getItem(ADMIN_SESSION_KEY);
+}
+
+export async function adminLogin(password: string): Promise<string> {
+  const res = await fetch('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Invalid admin credentials');
+  }
+
+  sessionStorage.setItem(ADMIN_SESSION_KEY, data.token);
+  return data.token;
+}
+
+export function adminLogout(): void {
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+}
+
+export function isAdminAuthenticated(): boolean {
+  return Boolean(sessionStorage.getItem(ADMIN_SESSION_KEY));
+}
 
 export function getCustomBlobToken(): string {
   return localStorage.getItem(ADMIN_BLOB_TOKEN_KEY) || '';
@@ -19,11 +48,15 @@ export function setCustomBlobToken(token: string): void {
 // -------------------------------------------------------------
 export async function getProducts(forAdmin = false): Promise<Product[]> {
   const token = getCustomBlobToken();
+  const sessionToken = getAdminToken();
   const url = forAdmin ? '/api/products?admin=true' : '/api/products';
   
   const headers: Record<string, string> = {};
   if (token) {
     headers['x-blob-token'] = token;
+  }
+  if (sessionToken) {
+    headers['Authorization'] = `Bearer ${sessionToken}`;
   }
 
   const res = await fetch(url, { headers });
@@ -38,11 +71,15 @@ export async function getProducts(forAdmin = false): Promise<Product[]> {
 
 export async function createProduct(product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
   const token = getCustomBlobToken();
+  const sessionToken = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (token) {
     headers['x-blob-token'] = token;
+  }
+  if (sessionToken) {
+    headers['Authorization'] = `Bearer ${sessionToken}`;
   }
 
   const res = await fetch('/api/products', {
@@ -62,11 +99,15 @@ export async function createProduct(product: Omit<Product, 'id' | 'createdAt' | 
 
 export async function updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
   const token = getCustomBlobToken();
+  const sessionToken = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (token) {
     headers['x-blob-token'] = token;
+  }
+  if (sessionToken) {
+    headers['Authorization'] = `Bearer ${sessionToken}`;
   }
 
   const res = await fetch(`/api/products?id=${encodeURIComponent(id)}`, {
@@ -86,9 +127,13 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
 
 export async function deleteProduct(id: string): Promise<boolean> {
   const token = getCustomBlobToken();
+  const sessionToken = getAdminToken();
   const headers: Record<string, string> = {};
   if (token) {
     headers['x-blob-token'] = token;
+  }
+  if (sessionToken) {
+    headers['Authorization'] = `Bearer ${sessionToken}`;
   }
 
   const res = await fetch(`/api/products?id=${encodeURIComponent(id)}`, {

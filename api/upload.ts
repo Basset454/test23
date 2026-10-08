@@ -21,26 +21,19 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-
-  if (!token || token.trim().length === 0) {
-    return res.status(500).json({
-      error: 'BLOB_READ_WRITE_TOKEN is missing! Please make sure your Vercel Blob store (test23-blob) is connected to the project on Vercel.',
-      code: 'MISSING_BLOB_TOKEN',
-    });
-  }
+  const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
 
   try {
     const rawFilename = (req.query.filename as string) || `furniture-${Date.now()}.jpg`;
-    // Clean and organize into products folder
     const cleanFilename = rawFilename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const pathname = `products/${Date.now()}-${cleanFilename}`;
     const contentType = (req.headers['content-type'] as string) || 'image/jpeg';
 
-    // Stream directly into Vercel Blob
+    // Stream directly into Vercel Blob using token or automatic Vercel OIDC
     const blob = await put(pathname, req, {
       access: 'public',
-      token: token.trim(),
+      token,
       contentType,
     });
 
@@ -53,7 +46,7 @@ export default async function handler(req: any, res: any) {
   } catch (error: any) {
     console.error('Real Vercel Blob upload error:', error);
     return res.status(500).json({
-      error: `Vercel Blob upload failed: ${error.message || 'Unknown error'}`,
+      error: `Vercel Blob upload failed: ${error.message || 'Unknown Blob error'}. Ensure test23-blob is attached to the Vercel project.`,
       details: error.toString(),
     });
   }

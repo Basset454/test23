@@ -1,7 +1,6 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
 export default async function handler(request: any, response: any) {
-  // Set CORS headers
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token');
@@ -14,13 +13,8 @@ export default async function handler(request: any, response: any) {
     return response.status(405).json({ error: 'Method not allowed' });
   }
 
-  const token = (request.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-
-  if (!token) {
-    return response.status(500).json({
-      error: 'BLOB_READ_WRITE_TOKEN is missing! Please attach test23-blob store in your Vercel project.',
-    });
-  }
+  const explicitToken = (request.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  const token = explicitToken && explicitToken.trim().length > 0 ? explicitToken.trim() : undefined;
 
   try {
     const body = (request.body || {}) as HandleUploadBody;
@@ -35,9 +29,7 @@ export default async function handler(request: any, response: any) {
           tokenPayload: JSON.stringify({ pathname }),
         };
       },
-      onUploadCompleted: async () => {
-        // Notification on upload completion
-      },
+      onUploadCompleted: async () => {},
     });
 
     return response.status(200).json(jsonResponse);
