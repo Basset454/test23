@@ -1,167 +1,46 @@
 import fs from 'fs';
 import path from 'path';
-import { put, list } from '@vercel/blob';
+import { Product } from '../src/types';
+import { INITIAL_PRODUCTS } from '../src/data/initialProducts';
+import {
+  getDatabaseUrl,
+  getNeonProducts,
+  insertNeonProduct,
+  updateNeonProduct,
+  deleteNeonProduct,
+} from './db';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const LOCAL_PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
 
-const INITIAL_FALLBACK_PRODUCTS = [
-  {
-    id: 'prod-f1',
-    name: 'Nordic Oak Lounge Chair',
-    price: 480,
-    description: 'Handcrafted solid oak armchair upholstered with premium textured linen. Features ergonomic curved backrest and tapered wooden legs.',
-    category: 'Living Room',
-    isPublished: true,
-    isFeatured: true,
-    coverImageUrl: 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?w=1000&auto=format&fit=crop&q=80',
-    images: [
-      {
-        id: 'img-f1-1',
-        url: 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?w=1000&auto=format&fit=crop&q=80',
-        name: 'nordic_oak_chair.jpg',
-        isCover: true,
-        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      }
-    ],
-    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: 'prod-f2',
-    name: 'Minimalist Walnut Dining Table',
-    price: 920,
-    description: 'Six-seater contemporary dining table crafted from sustainable American walnut with matte protective finish. Elegant bevelled edges and solid joinery.',
-    category: 'Dining Room',
-    isPublished: true,
-    isFeatured: false,
-    coverImageUrl: 'https://images.unsplash.com/photo-1615066390971-03e4e1c36ddf?w=1000&auto=format&fit=crop&q=80',
-    images: [
-      {
-        id: 'img-f2-1',
-        url: 'https://images.unsplash.com/photo-1615066390971-03e4e1c36ddf?w=1000&auto=format&fit=crop&q=80',
-        name: 'walnut_dining_table.jpg',
-        isCover: true,
-        uploadedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      }
-    ],
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: 'prod-f3',
-    name: 'Bouclé Cloud Modular Sofa',
-    price: 1650,
-    description: 'Deep-seat modular 3-piece sectional sofa covered in ivory bouclé fabric. High-density foam core with feather blend topper for ultimate comfort.',
-    category: 'Living Room',
-    isPublished: true,
-    isFeatured: true,
-    coverImageUrl: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=1000&auto=format&fit=crop&q=80',
-    images: [
-      {
-        id: 'img-f3-1',
-        url: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=1000&auto=format&fit=crop&q=80',
-        name: 'boucle_sofa.jpg',
-        isCover: true,
-        uploadedAt: new Date(Date.now() - 86400000).toISOString(),
-      }
-    ],
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000).toISOString(),
-  }
-];
-
-let memoryProductsCache: any[] | null = null;
-let lastBlobDbUrl: string | null = null;
-
-async function loadProducts(token?: string): Promise<any[]> {
-  // 1. Try reading from Vercel Blob persistent database if possible
-  try {
-    const effectiveToken = token || process.env.BLOB_READ_WRITE_TOKEN || undefined;
-    if (lastBlobDbUrl) {
-      const res = await fetch(lastBlobDbUrl, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          memoryProductsCache = data;
-          return data;
-        }
-      }
-    }
-
-    const { blobs } = await list({
-      prefix: '_database/products.json',
-      token: effectiveToken,
-    });
-
-    if (blobs && blobs.length > 0) {
-      lastBlobDbUrl = blobs[0].url;
-      const res = await fetch(blobs[0].url, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          memoryProductsCache = data;
-          return data;
-        }
-      }
-    }
-  } catch (blobErr) {
-    // If Blob listing not yet initialized or network error, fallback to local/cache
-  }
-
-  // 2. Return in-memory cache if available
-  if (memoryProductsCache && memoryProductsCache.length > 0) {
-    return memoryProductsCache;
-  }
-
-  // 3. Try reading from local disk (dev / local environment)
+// Local file helper for development fallback only (when Neon connection string is not yet set)
+function loadLocalFileProducts(): Product[] {
   try {
     if (fs.existsSync(LOCAL_PRODUCTS_FILE)) {
       const data = fs.readFileSync(LOCAL_PRODUCTS_FILE, 'utf-8');
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        memoryProductsCache = parsed;
         return parsed;
       }
     }
   } catch (e) {
-    // Filesystem may be read-only in some Vercel lambdas
+    // ignore
   }
-
-  memoryProductsCache = INITIAL_FALLBACK_PRODUCTS;
-  return INITIAL_FALLBACK_PRODUCTS;
+  return INITIAL_PRODUCTS;
 }
 
-async function persistProducts(products: any[], token?: string) {
-  memoryProductsCache = products;
-
-  // 1. Persist to local disk if writable
+function saveLocalFileProducts(products: Product[]) {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(LOCAL_PRODUCTS_FILE, JSON.stringify(products, null, 2), 'utf-8');
-  } catch {
-    // Read-only serverless environment
-  }
-
-  // 2. Persist to Vercel Blob storage (canonical persistent database across cold starts)
-  try {
-    const effectiveToken = token || process.env.BLOB_READ_WRITE_TOKEN || undefined;
-    const blob = await put('_database/products.json', JSON.stringify(products), {
-      access: 'public',
-      token: effectiveToken,
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: 'application/json',
-    });
-    lastBlobDbUrl = blob.url;
-  } catch (blobSaveErr) {
-    console.warn('Persistent Blob database sync warning:', blobSaveErr);
+  } catch (e) {
+    // ignore
   }
 }
 
-function normalizeProduct(raw: any) {
+function normalizeProduct(raw: any): Product {
   const images = Array.isArray(raw.images) ? raw.images : [];
   const coverObj = images.find((i: any) => i.isCover) || images[0];
   const coverImageUrl = raw.coverImageUrl || coverObj?.url || '';
@@ -182,29 +61,40 @@ function normalizeProduct(raw: any) {
 }
 
 export default async function handler(req: any, res: any) {
+  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  const isNeonConfigured = Boolean(getDatabaseUrl());
 
   try {
-    const products = await loadProducts(token);
-
+    // -------------------------------------------------------------
     // GET /api/products
+    // -------------------------------------------------------------
     if (req.method === 'GET') {
       const includeUnpublished = req.query.all === 'true' || req.query.admin === 'true';
+
+      if (isNeonConfigured) {
+        const neonProducts = await getNeonProducts(includeUnpublished);
+        if (neonProducts !== null) {
+          return res.status(200).json({ products: neonProducts, source: 'neon_postgres' });
+        }
+      }
+
+      // Local dev fallback
+      const localProducts = loadLocalFileProducts();
       const result = includeUnpublished
-        ? products
-        : products.filter((p: any) => p.isPublished !== false);
-      return res.status(200).json({ products: result });
+        ? localProducts
+        : localProducts.filter((p) => p.isPublished !== false);
+      return res.status(200).json({ products: result, source: 'local_disk' });
     }
 
-    // Parse request body for mutations
+    // Parse body for mutations
     let body = req.body;
     if (typeof body === 'string') {
       try {
@@ -214,27 +104,50 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // POST /api/products (Create new product)
+    // -------------------------------------------------------------
+    // POST /api/products (Create new product in Neon Postgres)
+    // -------------------------------------------------------------
     if (req.method === 'POST') {
       if (!body || !body.name) {
         return res.status(400).json({ error: 'Product name is required' });
       }
 
       const productToInsert = normalizeProduct(body);
-      const updatedList = [productToInsert, ...products];
-      await persistProducts(updatedList, token);
-      return res.status(201).json({ success: true, product: productToInsert });
+
+      if (isNeonConfigured) {
+        const inserted = await insertNeonProduct(productToInsert);
+        if (inserted) {
+          return res.status(201).json({ success: true, product: inserted, source: 'neon_postgres' });
+        }
+      }
+
+      // Local dev fallback
+      const current = loadLocalFileProducts();
+      const updatedList = [productToInsert, ...current];
+      saveLocalFileProducts(updatedList);
+      return res.status(201).json({ success: true, product: productToInsert, source: 'local_disk' });
     }
 
-    // PUT /api/products (Update product)
+    // -------------------------------------------------------------
+    // PUT /api/products (Update product in Neon Postgres)
+    // -------------------------------------------------------------
     if (req.method === 'PUT') {
       const productId = (req.query.id as string) || body?.id;
       if (!productId) {
         return res.status(400).json({ error: 'Product ID is required for update' });
       }
 
-      let updatedProduct: any = null;
-      const updatedList = products.map((p: any) => {
+      if (isNeonConfigured) {
+        const updated = await updateNeonProduct(productId, body);
+        if (updated) {
+          return res.status(200).json({ success: true, product: updated, source: 'neon_postgres' });
+        }
+      }
+
+      // Local dev fallback
+      const current = loadLocalFileProducts();
+      let updatedProduct: Product | null = null;
+      const updatedList = current.map((p) => {
         if (p.id === productId) {
           updatedProduct = normalizeProduct({ ...p, ...body, id: productId });
           return updatedProduct;
@@ -247,25 +160,44 @@ export default async function handler(req: any, res: any) {
         updatedList.unshift(updatedProduct);
       }
 
-      await persistProducts(updatedList, token);
-      return res.status(200).json({ success: true, product: updatedProduct });
+      saveLocalFileProducts(updatedList);
+      return res.status(200).json({ success: true, product: updatedProduct, source: 'local_disk' });
     }
 
-    // DELETE /api/products (Delete product)
+    // -------------------------------------------------------------
+    // DELETE /api/products (Delete product from Neon Postgres)
+    // -------------------------------------------------------------
     if (req.method === 'DELETE') {
       const productId = (req.query.id as string) || body?.id;
       if (!productId) {
         return res.status(400).json({ error: 'Product ID is required for deletion' });
       }
 
-      const updatedList = products.filter((p: any) => p.id !== productId);
-      await persistProducts(updatedList, token);
-      return res.status(200).json({ success: true, message: 'Product deleted successfully', id: productId });
+      if (isNeonConfigured) {
+        await deleteNeonProduct(productId);
+        return res.status(200).json({
+          success: true,
+          message: 'Product deleted from Neon database successfully',
+          id: productId,
+          source: 'neon_postgres',
+        });
+      }
+
+      // Local dev fallback
+      const current = loadLocalFileProducts();
+      const updatedList = current.filter((p) => p.id !== productId);
+      saveLocalFileProducts(updatedList);
+      return res.status(200).json({
+        success: true,
+        message: 'Product deleted successfully',
+        id: productId,
+        source: 'local_disk',
+      });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (error: any) {
-    console.error('Products API error:', error);
-    return res.status(500).json({ error: error.message || 'Server database error' });
+    console.error('Products API error with Neon Postgres:', error);
+    return res.status(500).json({ error: error.message || 'Database error occurred' });
   }
 }

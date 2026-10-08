@@ -10,7 +10,8 @@ import {
   RotateCcw,
   Sparkles,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Database
 } from 'lucide-react';
 import { Product, BlobStatus } from '../types';
 import { AdminProductForm } from './AdminProductForm';
@@ -71,12 +72,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* Top Admin Navigation Bar */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-stone-900 text-stone-100 p-6 rounded-3xl shadow-xl">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs uppercase tracking-widest font-bold text-stone-400">
               Admin Portal
             </span>
             <span className="text-stone-600">•</span>
-            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+            <span className="text-xs text-cyan-400 font-semibold flex items-center gap-1 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-800">
+              <Database className="w-3.5 h-3.5" />
+              Neon Postgres
+            </span>
+            <span className="text-stone-600">•</span>
+            <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-800">
               <CheckCircle2 className="w-3.5 h-3.5" />
               test23-blob
             </span>
@@ -85,7 +91,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             Trust Furniture Admin
           </h1>
           <p className="text-xs text-stone-400">
-            Dedicated management interface. Completely isolated from customer experience.
+            Authoritative product metadata stored in Neon Postgres. Product images stored in Vercel Blob.
           </p>
         </div>
 

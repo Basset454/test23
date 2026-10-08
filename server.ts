@@ -7,6 +7,14 @@ import dotenv from 'dotenv';
 import { put, del } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
+import {
+  getDatabaseUrl,
+  getNeonProducts,
+  insertNeonProduct,
+  updateNeonProduct,
+  deleteNeonProduct,
+} from './api/db';
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -318,49 +326,94 @@ app.delete('/api/delete-image', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// 5. Products Database APIs (Persistent, NOT localStorage)
+// 5. Products Database APIs (Persistent in Neon Postgres, NOT localStorage)
 // -------------------------------------------------------------
-app.get('/api/products', (req: Request, res: Response) => {
-  const products = loadProducts();
+app.get('/api/products', async (req: Request, res: Response) => {
   const includeUnpublished = req.query.all === 'true' || req.query.admin === 'true';
+
+  if (getDatabaseUrl()) {
+    try {
+      const neonProducts = await getNeonProducts(includeUnpublished);
+      if (neonProducts !== null) {
+        return res.json({ products: neonProducts, source: 'neon_postgres' });
+      }
+    } catch (err: any) {
+      console.error('Neon query error in server.ts:', err);
+    }
+  }
+
+  const products = loadProducts();
   const result = includeUnpublished ? products : products.filter((p: any) => p.isPublished !== false);
-  res.json({ products: result });
+  res.json({ products: result, source: 'local_disk' });
 });
 
-app.post('/api/products', (req: Request, res: Response) => {
+app.post('/api/products', async (req: Request, res: Response) => {
   try {
     const newProduct = req.body;
     if (!newProduct || !newProduct.name) {
       return res.status(400).json({ error: 'Product name is required.' });
     }
-    const current = loadProducts();
+
+    const images = Array.isArray(newProduct.images) ? newProduct.images : [];
+    const coverObj = images.find((i: any) => i.isCover) || images[0];
+    const coverImageUrl = newProduct.coverImageUrl || coverObj?.url || '';
+
     const productToSave = {
       ...newProduct,
       id: newProduct.id || `prod-f${Date.now()}`,
+      images,
+      coverImageUrl,
+      isPublished: newProduct.isPublished !== false,
+      isFeatured: Boolean(newProduct.isFeatured),
       createdAt: newProduct.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
+    if (getDatabaseUrl()) {
+      try {
+        const inserted = await insertNeonProduct(productToSave);
+        if (inserted) {
+          return res.status(201).json({ success: true, product: inserted, source: 'neon_postgres' });
+        }
+      } catch (err: any) {
+        console.error('Neon insert error:', err);
+      }
+    }
+
+    const current = loadProducts();
     current.unshift(productToSave);
     saveProducts(current);
-    res.status(201).json({ success: true, product: productToSave });
+    res.status(201).json({ success: true, product: productToSave, source: 'local_disk' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-const handleUpdateProduct = (req: Request, res: Response) => {
+const handleUpdateProduct = async (req: Request, res: Response) => {
   try {
     const id = req.params.id || (req.query.id as string) || req.body?.id;
     if (!id) {
       return res.status(400).json({ error: 'Product ID is required for update' });
     }
     const updated = req.body;
+
+    if (getDatabaseUrl()) {
+      try {
+        const updatedNeon = await updateNeonProduct(id, updated);
+        if (updatedNeon) {
+          return res.json({ success: true, product: updatedNeon, source: 'neon_postgres' });
+        }
+      } catch (err: any) {
+        console.error('Neon update error:', err);
+      }
+    }
+
     let current = loadProducts();
     current = current.map((p: any) =>
       p.id === id ? { ...p, ...updated, updatedAt: new Date().toISOString() } : p
     );
     saveProducts(current);
-    res.json({ success: true, product: updated });
+    res.json({ success: true, product: updated, source: 'local_disk' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -372,26 +425,25 @@ const handleDeleteProduct = async (req: Request, res: Response) => {
     if (!id) {
       return res.status(400).json({ error: 'Product ID is required for deletion' });
     }
-    let current = loadProducts();
-    const productToDelete = current.find((p: any) => p.id === id);
 
-    // Delete images from Vercel Blob if available
-    const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-    if (productToDelete?.images?.length && token) {
-      for (const img of productToDelete.images) {
-        if (img.url?.includes('blob.vercel-storage.com')) {
-          try {
-            await del(img.url, { token: token.trim() });
-          } catch (e) {
-            console.warn('Could not delete blob image:', e);
-          }
-        }
+    if (getDatabaseUrl()) {
+      try {
+        await deleteNeonProduct(id);
+        return res.json({
+          success: true,
+          message: 'Product deleted from Neon database successfully.',
+          id,
+          source: 'neon_postgres',
+        });
+      } catch (err: any) {
+        console.error('Neon delete error:', err);
       }
     }
 
+    let current = loadProducts();
     current = current.filter((p: any) => p.id !== id);
     saveProducts(current);
-    res.json({ success: true, message: 'Product deleted from database successfully.' });
+    res.json({ success: true, message: 'Product deleted from database successfully.', id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
