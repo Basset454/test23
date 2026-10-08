@@ -1,235 +1,203 @@
 import { Product, ProductImage, BlobStatus } from '../types';
-import { INITIAL_PRODUCTS } from '../data/initialProducts';
 
-const LOCAL_STORAGE_KEY = 'store_products_data_v1';
-const BLOB_TOKEN_KEY = 'vercel_blob_custom_token';
+const ADMIN_BLOB_TOKEN_KEY = 'trust_admin_blob_token';
 
 export function getCustomBlobToken(): string {
-  return localStorage.getItem(BLOB_TOKEN_KEY) || '';
+  return localStorage.getItem(ADMIN_BLOB_TOKEN_KEY) || '';
 }
 
 export function setCustomBlobToken(token: string): void {
-  if (token) {
-    localStorage.setItem(BLOB_TOKEN_KEY, token.trim());
+  if (token && token.trim()) {
+    localStorage.setItem(ADMIN_BLOB_TOKEN_KEY, token.trim());
   } else {
-    localStorage.removeItem(BLOB_TOKEN_KEY);
+    localStorage.removeItem(ADMIN_BLOB_TOKEN_KEY);
   }
 }
 
 // -------------------------------------------------------------
-// Products API with local cache synchronization
+// Real Server Database APIs (NO localStorage as source of truth)
 // -------------------------------------------------------------
-export async function getProducts(): Promise<Product[]> {
-  try {
-    const res = await fetch('/api/products');
-    if (res.ok) {
-      const data = await res.json();
-      if (data.products && Array.isArray(data.products) && data.products.length > 0) {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.products));
-        return data.products;
-      }
-    }
-  } catch (e) {
-    console.warn('Backend fetch failed, falling back to local storage cache:', e);
+export async function getProducts(forAdmin = false): Promise<Product[]> {
+  const token = getCustomBlobToken();
+  const url = forAdmin ? '/api/products?admin=true' : '/api/products';
+  
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['x-blob-token'] = token;
   }
 
-  // Fallback to local storage or initial dataset
-  const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch {
-      // ignore
-    }
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || `Failed to fetch products from server (${res.status})`);
   }
 
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(INITIAL_PRODUCTS));
-  // Try to sync initial products to server
-  try {
-    await fetch('/api/products/save-all', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ products: INITIAL_PRODUCTS }),
-    });
-  } catch {
-    // ignore
-  }
-
-  return INITIAL_PRODUCTS;
+  const data = await res.json();
+  return Array.isArray(data.products) ? data.products : [];
 }
 
-export async function createProduct(product: Product): Promise<Product> {
+export async function createProduct(product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Promise<Product> {
   const token = getCustomBlobToken();
-  try {
-    const res = await fetch('/api/products', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'x-blob-token': token } : {}),
-      },
-      body: JSON.stringify(product),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      updateLocalCache((current) => [data.product, ...current]);
-      return data.product;
-    }
-  } catch (e) {
-    console.warn('Server create failed, saving to local cache:', e);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['x-blob-token'] = token;
   }
 
-  updateLocalCache((current) => [product, ...current]);
-  return product;
+  const res = await fetch('/api/products', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(product),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || `Failed to create product on server (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.product;
 }
 
-export async function updateProduct(product: Product): Promise<Product> {
+export async function updateProduct(id: string, updates: Partial<Product>): Promise<Product> {
   const token = getCustomBlobToken();
-  try {
-    const res = await fetch(`/api/products/${product.id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'x-blob-token': token } : {}),
-      },
-      body: JSON.stringify(product),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      updateLocalCache((current) => current.map((p) => (p.id === product.id ? data.product : p)));
-      return data.product;
-    }
-  } catch (e) {
-    console.warn('Server update failed, updating local cache:', e);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['x-blob-token'] = token;
   }
 
-  updateLocalCache((current) => current.map((p) => (p.id === product.id ? product : p)));
-  return product;
+  const res = await fetch(`/api/products?id=${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ id, ...updates }),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || `Failed to update product on server (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.product;
 }
 
-export async function deleteProduct(productId: string, images: ProductImage[] = []): Promise<boolean> {
+export async function deleteProduct(id: string): Promise<boolean> {
   const token = getCustomBlobToken();
-  try {
-    await fetch(`/api/products/${productId}`, {
-      method: 'DELETE',
-      headers: {
-        ...(token ? { 'x-blob-token': token } : {}),
-      },
-    });
-  } catch (e) {
-    console.warn('Server delete failed, updating local cache:', e);
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['x-blob-token'] = token;
   }
 
-  // Also delete images from Vercel Blob if needed
-  for (const img of images) {
-    if (img.url && img.url.includes('blob.vercel-storage.com')) {
-      deleteImageFile(img.url).catch(() => {});
-    }
+  const res = await fetch(`/api/products?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers,
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || `Failed to delete product on server (${res.status})`);
   }
 
-  updateLocalCache((current) => current.filter((p) => p.id !== productId));
   return true;
 }
 
-function updateLocalCache(updater: (current: Product[]) => Product[]) {
-  try {
-    const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-    const list: Product[] = cached ? JSON.parse(cached) : INITIAL_PRODUCTS;
-    const updated = updater(list);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.error('Failed to update local cache', e);
+export async function resetProductsToInitial(): Promise<Product[]> {
+  const res = await fetch('/api/products/reset', { method: 'POST' });
+  if (res.ok) {
+    const data = await res.json();
+    return data.products || [];
   }
+  return [];
 }
 
 // -------------------------------------------------------------
-// Image Upload & Delete APIs
+// Real Vercel Blob Image Upload (NO FAKE BASE64 FALLBACK)
 // -------------------------------------------------------------
 export async function uploadImageFiles(
   files: File[],
   onProgress?: (progress: number) => void
 ): Promise<ProductImage[]> {
   const token = getCustomBlobToken();
-  const formData = new FormData();
-  files.forEach((file) => formData.append('images', file));
+  const uploadedResults: ProductImage[] = [];
 
-  try {
-    onProgress?.(30);
-    const headers: Record<string, string> = {};
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    onProgress?.(Math.round(((i + 0.3) / files.length) * 100));
+
+    // Try Vercel Serverless / Express binary upload endpoint
+    const url = `/api/upload?filename=${encodeURIComponent(file.name)}`;
+    const headers: Record<string, string> = {
+      'content-type': file.type || 'image/jpeg',
+    };
     if (token) {
       headers['x-blob-token'] = token;
     }
 
+    // Send multipart FormData or raw body
+    const formData = new FormData();
+    formData.append('images', file);
+
     const res = await fetch('/api/upload', {
       method: 'POST',
-      headers,
+      headers: token ? { 'x-blob-token': token } : {},
       body: formData,
     });
 
-    onProgress?.(80);
+    onProgress?.(Math.round(((i + 0.9) / files.length) * 100));
 
-    if (res.ok) {
-      const data = await res.json();
-      onProgress?.(100);
-      return data.files || [];
-    } else {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || 'فشل رفع الصور');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const detailedMessage =
+        errData.error ||
+        `Vercel Blob upload failed with status ${res.status}. Verify that BLOB_READ_WRITE_TOKEN is configured in Vercel project settings for test23-blob.`;
+      
+      // CRITICAL: DO NOT FALL BACK TO LOCAL STORAGE OR FAKE URL!
+      throw new Error(detailedMessage);
     }
-  } catch (err: any) {
-    console.warn('API upload encountered an issue, generating durable fallback:', err);
-    onProgress?.(70);
 
-    // Fallback: convert files to Base64 data URLs so the user is never blocked
-    const fallbackResults: ProductImage[] = await Promise.all(
-      files.map(
-        (file, idx) =>
-          new Promise<ProductImage>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              resolve({
-                id: `img-${Date.now()}-${idx}`,
-                url: reader.result as string,
-                name: file.name,
-                size: file.size,
-                provider: 'local_storage',
-                uploadedAt: new Date().toISOString(),
-              });
-            };
-            reader.onerror = () => {
-              resolve({
-                id: `img-err-${Date.now()}-${idx}`,
-                url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800',
-                name: file.name,
-                provider: 'local_storage',
-                uploadedAt: new Date().toISOString(),
-              });
-            };
-            reader.readAsDataURL(file);
-          })
-      )
-    );
-
-    onProgress?.(100);
-    return fallbackResults;
+    const data = await res.json();
+    if (!data.files || data.files.length === 0) {
+      if (data.url) {
+        uploadedResults.push({
+          id: `img-${Date.now()}-${i}`,
+          url: data.url,
+          pathname: data.pathname,
+          name: file.name,
+          size: file.size,
+          isCover: i === 0,
+          uploadedAt: new Date().toISOString(),
+        });
+      } else {
+        throw new Error('Upload succeeded on server but no Blob URL was returned by Vercel.');
+      }
+    } else {
+      uploadedResults.push(...data.files);
+    }
   }
+
+  onProgress?.(100);
+  return uploadedResults;
 }
 
 export async function deleteImageFile(url: string): Promise<boolean> {
   const token = getCustomBlobToken();
-  try {
-    const res = await fetch('/api/delete-image', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'x-blob-token': token } : {}),
-      },
-      body: JSON.stringify({ url }),
-    });
-    return res.ok;
-  } catch (e) {
-    console.warn('Delete image failed:', e);
-    return false;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['x-blob-token'] = token;
   }
+
+  const res = await fetch('/api/delete-image', {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ url }),
+  });
+
+  return res.ok;
 }
 
 export async function getBlobStatus(): Promise<BlobStatus> {
@@ -242,50 +210,19 @@ export async function getBlobStatus(): Promise<BlobStatus> {
     const res = await fetch('/api/blob/status', { headers });
     if (res.ok) {
       const data = await res.json();
-      if (customToken) {
-        return {
-          ...data,
-          tokenConfigured: true,
-          connected: true,
-          maskedToken: `${customToken.substring(0, 8)}...${customToken.substring(customToken.length - 4)}`,
-          provider: 'vercel_blob',
-          message: 'تم تفعيل Vercel Blob عبر الرمز المخصص. الصور تُرفع وتُخزن على CDN دائم.',
-        };
-      }
       return data;
     }
-  } catch (e) {
-    console.warn('Blob status check error:', e);
-  }
-
-  if (customToken) {
-    return {
-      connected: true,
-      tokenConfigured: true,
-      maskedToken: `${customToken.substring(0, 8)}...${customToken.substring(customToken.length - 4)}`,
-      provider: 'vercel_blob',
-      message: 'رمز Vercel Blob مفعّل ومخزن محلياً.',
-    };
+  } catch (err) {
+    console.warn('Could not check blob status:', err);
   }
 
   return {
-    connected: false,
-    tokenConfigured: false,
-    provider: 'local_fallback',
-    message: 'وضع التطوير المباشر. عند النشر على Vercel أضف BLOB_READ_WRITE_TOKEN لتفعيل Vercel Blob تلقائياً.',
+    connected: Boolean(customToken),
+    tokenConfigured: Boolean(customToken),
+    storeName: 'test23-blob',
+    maskedToken: customToken ? `${customToken.substring(0, 8)}...` : undefined,
+    message: customToken
+      ? 'Using custom token for Vercel Blob store test23-blob.'
+      : 'Checking Vercel Blob store test23-blob connection...',
   };
-}
-
-export async function resetProductsToDefault(): Promise<Product[]> {
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(INITIAL_PRODUCTS));
-  try {
-    await fetch('/api/products/save-all', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ products: INITIAL_PRODUCTS }),
-    });
-  } catch {
-    // ignore
-  }
-  return INITIAL_PRODUCTS;
 }

@@ -1,311 +1,205 @@
 import React, { useState, useEffect } from 'react';
-import { Product, BlobStatus, CartItem } from './types';
+import { Product, BlobStatus } from './types';
 import { 
   getProducts, 
   createProduct, 
   updateProduct, 
   deleteProduct, 
   getBlobStatus, 
-  resetProductsToDefault 
+  resetProductsToInitial 
 } from './services/api';
-import { Navbar } from './components/Navbar';
-import { Storefront } from './components/Storefront';
-import { AdminDashboard } from './components/AdminDashboard';
-import { ProductFormModal } from './components/ProductFormModal';
-import { ProductDetailModal } from './components/ProductDetailModal';
-import { CartDrawer } from './components/CartDrawer';
-import { VercelBlobGuideModal } from './components/VercelBlobGuideModal';
-import { ImagePreviewModal } from './components/ImagePreviewModal';
+import { CustomerNavbar } from './components/CustomerNavbar';
+import { CustomerStore } from './components/CustomerStore';
+import { AdminLogin } from './components/AdminLogin';
+import { AdminPanel } from './components/AdminPanel';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<'store' | 'admin'>('store');
+  const [isAdminRoute, setIsAdminRoute] = useState(false);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [blobStatus, setBlobStatus] = useState<BlobStatus | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  // Modals & Drawers state
-  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [isBlobGuideOpen, setIsBlobGuideOpen] = useState(false);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
-
-  // Cart state
-  const [cartItems, setCartItems] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('store_cart_v1');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Toast feedback
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
-
-  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 3500);
+    setTimeout(() => setToast(null), 3500);
   };
 
-  // Sync /admin URL path or hash
+  // Route detection (/admin or #admin)
   useEffect(() => {
-    if (window.location.pathname.includes('/admin') || window.location.hash === '#admin') {
-      setCurrentView('admin');
-    }
+    const checkRoute = () => {
+      const pathname = window.location.pathname;
+      const hash = window.location.hash;
+      const isAdmin = pathname.includes('/admin') || hash === '#admin';
+      setIsAdminRoute(isAdmin);
 
-    const handlePopState = () => {
-      if (window.location.pathname.includes('/admin') || window.location.hash === '#admin') {
-        setCurrentView('admin');
-      } else {
-        setCurrentView('store');
-      }
+      const isAuthed = sessionStorage.getItem('trust_admin_authenticated') === 'true';
+      setIsAdminAuthenticated(isAuthed);
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+
+    checkRoute();
+    window.addEventListener('popstate', checkRoute);
+    window.addEventListener('hashchange', checkRoute);
+    return () => {
+      window.removeEventListener('popstate', checkRoute);
+      window.removeEventListener('hashchange', checkRoute);
+    };
   }, []);
 
-  // Update URL history when switching views
-  const handleViewChange = (view: 'store' | 'admin') => {
-    setCurrentView(view);
-    if (view === 'admin') {
-      window.history.pushState({}, '', '#admin');
-    } else {
-      window.history.pushState({}, '', window.location.pathname.replace('/admin', '') || '/');
+  // Fetch products from persistent database API
+  const refreshProducts = async (forAdmin?: boolean) => {
+    try {
+      const data = await getProducts(forAdmin ?? isAdminRoute);
+      setProducts(data);
+    } catch (err: any) {
+      console.error('Failed to load products from server:', err);
+      showToast(err.message || 'Error fetching products from database', 'error');
     }
   };
 
-  // Save cart to local storage
-  useEffect(() => {
-    localStorage.setItem('store_cart_v1', JSON.stringify(cartItems));
-  }, [cartItems]);
+  const refreshBlobStatus = async () => {
+    try {
+      const status = await getBlobStatus();
+      setBlobStatus(status);
+    } catch (e) {
+      console.warn('Could not refresh blob status:', e);
+    }
+  };
 
-  // Initial load
   useEffect(() => {
-    async function loadData() {
+    async function init() {
       setLoading(true);
-      try {
-        const [loadedProducts, status] = await Promise.all([
-          getProducts(),
-          getBlobStatus(),
-        ]);
-        setProducts(loadedProducts);
-        setBlobStatus(status);
-      } catch (err) {
-        console.error('Failed to initialize app data:', err);
-      } finally {
-        setLoading(false);
-      }
+      await Promise.all([refreshProducts(isAdminRoute), refreshBlobStatus()]);
+      setLoading(false);
     }
-    loadData();
-  }, []);
+    init();
+  }, [isAdminRoute]);
 
-  // Product CRUD Handlers
-  const handleOpenAddProduct = () => {
-    setEditingProduct(null);
-    setIsFormModalOpen(true);
+  // Admin CRUD actions
+  const handleAddProduct = async (newProduct: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const created = await createProduct(newProduct);
+    setProducts((prev) => [created, ...prev]);
+    showToast(`Product "${created.name}" saved to database successfully.`);
   };
 
-  const handleOpenEditProduct = (product: Product) => {
-    setEditingProduct(product);
-    setIsFormModalOpen(true);
+  const handleUpdateProduct = async (id: string, updates: Partial<Product>) => {
+    const updated = await updateProduct(id, updates);
+    setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, ...updated } : p)));
+    showToast(`Product updated successfully.`);
   };
 
-  const handleSaveProduct = async (productData: Product) => {
-    if (editingProduct) {
-      // Update existing
-      const updated = await updateProduct(productData);
-      setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-      showToast('تم تحديث بيانات المنتج وصوره بنجاح!');
-    } else {
-      // Create new
-      const created = await createProduct(productData);
-      setProducts((prev) => [created, ...prev]);
-      showToast('تمت إضافة المنتج الجديد وحفظ صوره الدائمة بنجاح!');
-    }
-  };
-
-  const handleDeleteProduct = async (productId: string) => {
-    const toDelete = products.find((p) => p.id === productId);
-    await deleteProduct(productId, toDelete?.images);
-    setProducts((prev) => prev.filter((p) => p.id !== productId));
-    showToast('تم حذف المنتج وصوره من التخزين بنجاح', 'info');
+  const handleDeleteProduct = async (id: string) => {
+    await deleteProduct(id);
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+    showToast(`Product deleted from database.`, 'success');
   };
 
   const handleResetProducts = async () => {
-    if (window.confirm('هل تريد إعادة تعيين المنتجات إلى القائمة النموذجية الافتراضية؟')) {
-      const resetList = await resetProductsToDefault();
+    if (window.confirm('Reset all catalog items to sample furniture products?')) {
+      const resetList = await resetProductsToInitial();
       setProducts(resetList);
-      showToast('تمت استعادة المنتجات الافتراضية بنجاح!');
+      showToast('Catalog restored to default furniture collection.');
     }
   };
 
-  // Cart operations
-  const handleAddToCart = (product: Product, quantity = 1) => {
-    setCartItems((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
-      if (existing) {
-        return prev.map((item) =>
-          item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
-        );
-      }
-      return [...prev, { product, quantity }];
-    });
-    showToast(`تمت إضافة "${product.title}" إلى السلة`);
+  const handleAdminLogout = () => {
+    sessionStorage.removeItem('trust_admin_authenticated');
+    setIsAdminAuthenticated(false);
+    // Redirect back to home
+    window.location.hash = '';
+    window.history.pushState({}, '', '/');
+    setIsAdminRoute(false);
   };
-
-  const handleUpdateCartQuantity = (productId: string, quantity: number) => {
-    setCartItems((prev) =>
-      prev.map((item) =>
-        item.product.id === productId ? { ...item, quantity } : item
-      )
-    );
-  };
-
-  const handleRemoveCartItem = (productId: string) => {
-    setCartItems((prev) => prev.filter((item) => item.product.id !== productId));
-  };
-
-  const handleClearCart = () => {
-    setCartItems([]);
-  };
-
-  const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans antialiased flex flex-col justify-between selection:bg-stone-900 selection:text-white">
       
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom duration-300">
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom duration-200">
           <div
-            className={`flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-bold border ${
+            className={`flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-medium border ${
               toast.type === 'error'
-                ? 'bg-red-900 text-white border-red-700'
-                : toast.type === 'info'
-                ? 'bg-slate-900 text-white border-slate-700'
-                : 'bg-emerald-600 text-white border-emerald-500'
+                ? 'bg-red-950 text-red-100 border-red-800'
+                : 'bg-stone-900 text-stone-100 border-stone-800'
             }`}
           >
             {toast.type === 'error' ? (
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-300" />
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             ) : (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-300" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             )}
             <span>{toast.message}</span>
           </div>
         </div>
       )}
 
-      {/* Main Navbar */}
-      <Navbar
-        currentView={currentView}
-        setCurrentView={handleViewChange}
-        cartCount={totalCartCount}
-        openCart={() => setIsCartOpen(true)}
-        blobStatus={blobStatus}
-        openBlobModal={() => setIsBlobGuideOpen(true)}
-      />
-
-      {/* Main Page Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 gap-3">
-            <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
-            <span className="text-xs font-bold text-slate-500">
-              جارٍ تحميل بيانات المتجر وإعداد التخزين...
-            </span>
+      {/* Main Content Area */}
+      <div>
+        {isAdminRoute ? (
+          // ==================== INDEPENDENT ADMIN PORTAL (/admin) ====================
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {!isAdminAuthenticated ? (
+              <AdminLogin
+                onLoginSuccess={() => {
+                  setIsAdminAuthenticated(true);
+                  refreshProducts(true);
+                }}
+              />
+            ) : (
+              <AdminPanel
+                products={products}
+                onAddProduct={handleAddProduct}
+                onUpdateProduct={handleUpdateProduct}
+                onDeleteProduct={handleDeleteProduct}
+                onResetProducts={handleResetProducts}
+                onLogout={handleAdminLogout}
+                blobStatus={blobStatus}
+                onRefreshBlobStatus={refreshBlobStatus}
+              />
+            )}
           </div>
-        ) : currentView === 'admin' ? (
-          <AdminDashboard
-            products={products}
-            onAddProduct={handleOpenAddProduct}
-            onEditProduct={handleOpenEditProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onResetProducts={handleResetProducts}
-            onViewProductInStore={(prod) => {
-              setSelectedProduct(prod);
-              setCurrentView('store');
-            }}
-            blobStatus={blobStatus}
-            openBlobModal={() => setIsBlobGuideOpen(true)}
-            onPreviewImage={(url) => setPreviewImageUrl(url)}
-          />
         ) : (
-          <Storefront
-            products={products}
-            onSelectProduct={(prod) => setSelectedProduct(prod)}
-            onAddToCart={(prod) => handleAddToCart(prod, 1)}
-            onGoToAdmin={() => handleViewChange('admin')}
-          />
+          // ==================== CUSTOMER STOREFRONT (/) ====================
+          // STRICT RULE: No admin link/button anywhere in the customer-facing website
+          <>
+            <CustomerNavbar />
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-28 gap-3">
+                  <Loader2 className="w-7 h-7 text-stone-900 animate-spin" />
+                  <span className="text-xs font-medium text-stone-500">
+                    Loading collection...
+                  </span>
+                </div>
+              ) : (
+                <CustomerStore products={products} />
+              )}
+            </main>
+          </>
         )}
-      </main>
+      </div>
 
-      {/* Modals */}
-      <ProductFormModal
-        isOpen={isFormModalOpen}
-        onClose={() => setIsFormModalOpen(false)}
-        onSave={handleSaveProduct}
-        initialProduct={editingProduct}
-        onPreviewImage={(url) => setPreviewImageUrl(url)}
-      />
-
-      <ProductDetailModal
-        product={selectedProduct}
-        isOpen={Boolean(selectedProduct)}
-        onClose={() => setSelectedProduct(null)}
-        onAddToCart={handleAddToCart}
-        onPreviewImage={(url) => setPreviewImageUrl(url)}
-      />
-
-      <CartDrawer
-        isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
-        items={cartItems}
-        onUpdateQuantity={handleUpdateCartQuantity}
-        onRemoveItem={handleRemoveCartItem}
-        onClearCart={handleClearCart}
-      />
-
-      <VercelBlobGuideModal
-        isOpen={isBlobGuideOpen}
-        onClose={() => setIsBlobGuideOpen(false)}
-        blobStatus={blobStatus}
-        onStatusUpdate={(newStatus) => setBlobStatus(newStatus)}
-      />
-
-      <ImagePreviewModal
-        url={previewImageUrl}
-        onClose={() => setPreviewImageUrl(null)}
-      />
-
-      {/* Clean Footer */}
-      <footer className="mt-16 bg-white border-t border-slate-200 py-8 text-slate-500 text-xs text-center">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>© {new Date().getFullYear()} متجر بلوب - نظام رفع وتخزين صور المنتجات لبيئة Vercel Blob الدائمة.</p>
-          <div className="flex items-center gap-4 text-slate-600">
-            <button
-              onClick={() => handleViewChange(currentView === 'admin' ? 'store' : 'admin')}
-              className="hover:text-emerald-600 font-bold underline"
-            >
-              {currentView === 'admin' ? 'الانتقال إلى المتجر للزبائن' : 'الانتقال إلى لوحة الإدارة /admin'}
-            </button>
-            <span>•</span>
-            <button
-              onClick={() => setIsBlobGuideOpen(true)}
-              className="hover:text-emerald-600 font-bold"
-            >
-              دليل Vercel Blob
-            </button>
+      {/* Customer Footer (NO ADMIN LINK) */}
+      {!isAdminRoute && (
+        <footer id="about" className="bg-white border-t border-stone-200 py-12 mt-16 text-xs text-stone-500">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="space-y-1 text-center sm:text-left">
+              <p className="font-serif font-bold text-stone-900 text-sm">
+                TRUST FURNITURE STUDIO
+              </p>
+              <p className="text-stone-400">
+                Architectural furniture handcrafted with sustainable timber and natural textiles.
+              </p>
+            </div>
+            <p className="text-stone-400">
+              © {new Date().getFullYear()} Trust Furniture. All rights reserved.
+            </p>
           </div>
-        </div>
-      </footer>
+        </footer>
+      )}
 
     </div>
   );

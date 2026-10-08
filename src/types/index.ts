@@ -2,23 +2,20 @@ export interface ProductImage {
   id: string;
   url: string;
   pathname?: string;
-  isCover?: boolean;
+  isCover: boolean;
   name?: string;
   size?: number;
-  provider?: 'vercel_blob' | 'local_storage' | 'external_url';
   uploadedAt: string;
 }
 
 export interface Product {
   id: string;
-  title: string;
+  name: string;
   description: string;
   price: number;
-  originalPrice?: number;
   category: string;
-  stock: number;
   images: ProductImage[];
-  isFeatured?: boolean;
+  isPublished: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -28,10 +25,5 @@ export interface BlobStatus {
   tokenConfigured: boolean;
   maskedToken?: string;
   message: string;
-  provider: 'vercel_blob' | 'local_fallback';
-}
-
-export interface CartItem {
-  product: Product;
-  quantity: number;
+  storeName?: string;
 }

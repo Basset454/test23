@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { put, del } from '@vercel/blob';
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
 dotenv.config();
 
@@ -14,28 +15,28 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable JSON parser with high limit for images
+// Enable JSON parser
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Set up Multer with in-memory storage for direct streaming/upload
+// Set up Multer for multipart form uploads
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 15 * 1024 * 1024, // 15MB limit per file
-    files: 10, // up to 10 files at once
+    fileSize: 20 * 1024 * 1024, // 20MB limit
+    files: 10,
   },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('يُسمح فقط برفع ملفات الصور (PNG, JPG, WEBP, GIF, SVG)'));
+      cb(new Error('Only image files (PNG, JPG, WEBP, GIF, AVIF) are allowed.'));
     }
   },
 });
 
-// Products persistence file path
+// Products persistence file path on local disk
 const DATA_DIR = path.resolve(__dirname, 'data');
 const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
 
@@ -43,31 +44,39 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-const INITIAL_SERVER_PRODUCTS = [
+const INITIAL_FURNITURE_PRODUCTS = [
   {
-    id: 'prod-1',
-    title: 'ساعة ذكية فاخرة من التيتانيوم',
-    description: 'ساعة ذكية متطورة بإطار من التيتانيوم وشاشة AMOLED فائقة الدقة. مقاومة للماء وتدعم تتبع نبضات القلب والنشاط الرياضي وبطارية تدوم حتى 14 يومًا.',
-    price: 899,
-    originalPrice: 1199,
-    category: 'إلكترونيات',
-    stock: 15,
-    isFeatured: true,
+    id: 'prod-f1',
+    name: 'Nordic Oak Lounge Chair',
+    description: 'Handcrafted solid oak armchair upholstered with premium textured linen. Features ergonomic curved backrest and tapered wooden legs.',
+    price: 480,
+    category: 'Living Room',
+    isPublished: true,
     images: [
       {
-        id: 'img-1-1',
-        url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80',
-        name: 'titanium_watch_front.jpg',
+        id: 'img-f1-1',
+        url: 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?w=1000&auto=format&fit=crop&q=80',
+        name: 'nordic_oak_chair.jpg',
         isCover: true,
-        provider: 'external_url',
-        uploadedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-      },
+        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      }
+    ],
+    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+  },
+  {
+    id: 'prod-f2',
+    name: 'Minimalist Walnut Dining Table',
+    description: 'Six-seater contemporary dining table crafted from sustainable American walnut with matte protective finish. Elegant bevelled edges and solid joinery.',
+    price: 920,
+    category: 'Dining Room',
+    isPublished: true,
+    images: [
       {
-        id: 'img-1-2',
-        url: 'https://images.unsplash.com/photo-1508685096489-7aacd43bd3b1?w=800&auto=format&fit=crop&q=80',
-        name: 'titanium_watch_side.jpg',
-        isCover: false,
-        provider: 'external_url',
+        id: 'img-f2-1',
+        url: 'https://images.unsplash.com/photo-1615066390971-03e4e1c36ddf?w=1000&auto=format&fit=crop&q=80',
+        name: 'walnut_dining_table.jpg',
+        isCover: true,
         uploadedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
       }
     ],
@@ -75,49 +84,45 @@ const INITIAL_SERVER_PRODUCTS = [
     updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
   },
   {
-    id: 'prod-2',
-    title: 'سماعات رأس لاسلكية مانعة للضوضاء',
-    description: 'سماعات صوتية نقية بتقنية عزل الضوضاء النشط (ANC)، وسائد أذن مريحة من الجلد الطبيعي وعمر بطارية مذهل يصل إلى 40 ساعة تشغيل متواصل.',
-    price: 549,
-    originalPrice: 699,
-    category: 'إلكترونيات',
-    stock: 22,
-    isFeatured: true,
+    id: 'prod-f3',
+    name: 'Bouclé Cloud Modular Sofa',
+    description: 'Deep-seat modular 3-piece sectional sofa covered in ivory bouclé fabric. High-density foam core with feather blend topper for ultimate comfort.',
+    price: 1650,
+    category: 'Living Room',
+    isPublished: true,
     images: [
       {
-        id: 'img-2-1',
-        url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&auto=format&fit=crop&q=80',
-        name: 'headphones_main.jpg',
+        id: 'img-f3-1',
+        url: 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=1000&auto=format&fit=crop&q=80',
+        name: 'boucle_sofa.jpg',
         isCover: true,
-        provider: 'external_url',
-        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+        uploadedAt: new Date(Date.now() - 86400000).toISOString(),
       }
     ],
-    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000).toISOString(),
   }
 ];
 
 if (!fs.existsSync(PRODUCTS_FILE)) {
-  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(INITIAL_SERVER_PRODUCTS, null, 2), 'utf-8');
+  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(INITIAL_FURNITURE_PRODUCTS, null, 2), 'utf-8');
 }
 
-// Helper to sanitize filename
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-// In-memory or file-backed products store
 function loadProducts() {
   try {
     if (fs.existsSync(PRODUCTS_FILE)) {
       const data = fs.readFileSync(PRODUCTS_FILE, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch (err) {
     console.error('Failed to load products from disk:', err);
   }
-  return null;
+  return INITIAL_FURNITURE_PRODUCTS;
 }
 
 function saveProducts(products: any[]) {
@@ -143,171 +148,197 @@ app.get('/api/blob/status', (req: Request, res: Response) => {
     connected: isConfigured,
     tokenConfigured: isConfigured,
     maskedToken: masked,
-    provider: isConfigured ? 'vercel_blob' : 'local_fallback',
+    storeName: 'test23-blob',
     message: isConfigured
-      ? 'Vercel Blob متصل وجاهز لتخزين الصور سحابياً بشكل دائم وبأعلى سرعة CDN.'
-      : 'لم يتم العثور على BLOB_READ_WRITE_TOKEN. يعمل النظام حالياً بنظام التخزين المدمج المباشر حتى يتم ربطه بـ Vercel Blob.',
+      ? 'Connected to real Vercel Blob store (test23-blob). Real CDN URLs will be generated.'
+      : 'BLOB_READ_WRITE_TOKEN is missing. Please set BLOB_READ_WRITE_TOKEN in your environment or admin settings.',
   });
 });
 
 // -------------------------------------------------------------
-// 2. API: Upload Image(s) to Vercel Blob
+// 2. API: Upload Image to Vercel Blob (NO FAKE / LOCAL FALLBACK)
 // -------------------------------------------------------------
-app.post('/api/upload', upload.array('images', 10), async (req: Request, res: Response) => {
-  try {
-    const files = req.files as Express.Multer.File[];
-    if (!files || files.length === 0) {
-      return res.status(400).json({ error: 'لم يتم اختيار أي ملف للرفع' });
+// Route supports both binary body stream and multipart upload
+app.post(
+  '/api/upload',
+  upload.array('images', 10),
+  async (req: Request, res: Response) => {
+    const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+
+    if (!token || token.trim().length === 0) {
+      return res.status(500).json({
+        error:
+          'BLOB_READ_WRITE_TOKEN is not configured! Real Vercel Blob upload requires this token. Please make sure the test23-blob store is attached.',
+        code: 'MISSING_BLOB_TOKEN',
+      });
     }
 
-    const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
-    const uploadedImages = [];
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'No image file was selected for upload.' });
+      }
 
-    for (const file of files) {
-      const timestamp = Date.now();
-      const cleanOriginal = sanitizeFileName(file.originalname);
-      const filename = `products/${timestamp}-${cleanOriginal}`;
+      const uploadedImages = [];
 
-      if (token && token.trim().length > 0) {
-        // Real Vercel Blob Upload
-        try {
-          const blob = await put(filename, file.buffer, {
-            access: 'public',
-            token: token.trim(),
-            contentType: file.mimetype,
-          });
+      for (const file of files) {
+        const timestamp = Date.now();
+        const cleanName = sanitizeFileName(file.originalname);
+        const filename = `products/${timestamp}-${cleanName}`;
 
-          uploadedImages.push({
-            id: `img-${timestamp}-${Math.random().toString(36).substring(2, 7)}`,
-            url: blob.url,
-            pathname: blob.pathname,
-            name: file.originalname,
-            size: file.size,
-            provider: 'vercel_blob',
-            uploadedAt: new Date().toISOString(),
-          });
-        } catch (blobErr: any) {
-          console.error('Vercel Blob put error:', blobErr);
-          // If token fails, fallback to permanent data URL so user work isn't blocked
-          const base64Data = file.buffer.toString('base64');
-          const dataUrl = `data:${file.mimetype};base64,${base64Data}`;
-          uploadedImages.push({
-            id: `img-${timestamp}-${Math.random().toString(36).substring(2, 7)}`,
-            url: dataUrl,
-            name: file.originalname,
-            size: file.size,
-            provider: 'local_storage',
-            uploadedAt: new Date().toISOString(),
-            warning: 'فشل الاتصال بـ Vercel Blob (' + (blobErr.message || 'خطأ رمز') + ')، تم التخزين المباشر احتياطياً.',
-          });
-        }
-      } else {
-        // Local/Direct permanent data URL fallback
-        const base64Data = file.buffer.toString('base64');
-        const dataUrl = `data:${file.mimetype};base64,${base64Data}`;
+        // Call real @vercel/blob put()
+        const blob = await put(filename, file.buffer, {
+          access: 'public',
+          token: token.trim(),
+          contentType: file.mimetype,
+        });
 
         uploadedImages.push({
           id: `img-${timestamp}-${Math.random().toString(36).substring(2, 7)}`,
-          url: dataUrl,
+          url: blob.url,
+          pathname: blob.pathname,
           name: file.originalname,
           size: file.size,
-          provider: 'local_storage',
           uploadedAt: new Date().toISOString(),
-          notice: 'تم الحفظ في المتجر. عند النشر على Vercel برمز BLOB_READ_WRITE_TOKEN سيتم الرفع تلقائياً على Vercel Blob CDN.',
         });
       }
-    }
 
-    return res.json({
-      success: true,
-      files: uploadedImages,
-      provider: token ? 'vercel_blob' : 'local_storage',
-    });
-  } catch (error: any) {
-    console.error('Upload handler error:', error);
+      return res.json({
+        success: true,
+        files: uploadedImages,
+      });
+    } catch (error: any) {
+      console.error('Real Vercel Blob upload failed:', error);
+      // DO NOT FALL BACK TO LOCAL STORAGE OR FAKE URL!
+      return res.status(500).json({
+        error: `Vercel Blob upload failed: ${error.message || 'Unknown Blob error'}`,
+        details: error.toString(),
+      });
+    }
+  }
+);
+
+// -------------------------------------------------------------
+// 3. API: Client Upload Handler (@vercel/blob/client handleUpload)
+// -------------------------------------------------------------
+app.post('/api/blob-upload', async (req: Request, res: Response) => {
+  const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+
+  if (!token) {
     return res.status(500).json({
-      error: 'حدث خطأ أثناء رفع الصورة: ' + (error.message || 'خطأ غير معروف'),
+      error: 'BLOB_READ_WRITE_TOKEN is missing for client-upload generation.',
     });
+  }
+
+  try {
+    const body = req.body as HandleUploadBody;
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
+      token: token.trim(),
+      onBeforeGenerateToken: async (pathname) => {
+        return {
+          allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          tokenPayload: JSON.stringify({ pathname }),
+        };
+      },
+      onUploadCompleted: async () => {},
+    });
+
+    return res.status(200).json(jsonResponse);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || 'Client upload failed' });
   }
 });
 
 // -------------------------------------------------------------
-// 3. API: Delete Image from Vercel Blob
+// 4. API: Delete Image from Vercel Blob
 // -------------------------------------------------------------
 app.delete('/api/delete-image', async (req: Request, res: Response) => {
   try {
     const { url } = req.body;
     if (!url) {
-      return res.status(400).json({ error: 'رابط الصورة مطلوب للحذف' });
+      return res.status(400).json({ error: 'Image URL is required for deletion.' });
     }
 
     const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
 
-    // Check if it's a Vercel Blob URL
     if (url.includes('blob.vercel-storage.com') && token) {
-      try {
-        await del(url, { token: token.trim() });
-      } catch (delErr: any) {
-        console.warn('Vercel Blob del warning:', delErr?.message);
-      }
+      await del(url, { token: token.trim() });
     }
 
     return res.json({
       success: true,
-      message: 'تم حذف الصورة بنجاح',
+      message: 'Image deleted from Vercel Blob store successfully.',
       deletedUrl: url,
     });
   } catch (error: any) {
-    console.error('Delete handler error:', error);
+    console.error('Delete image error:', error);
     return res.status(500).json({
-      error: 'فشل حذف الصورة: ' + (error.message || 'خطأ غير معروف'),
+      error: `Failed to delete image: ${error.message || 'Unknown error'}`,
     });
   }
 });
 
 // -------------------------------------------------------------
-// 4. Products APIs
+// 5. Products Database APIs (Persistent, NOT localStorage)
 // -------------------------------------------------------------
-app.get('/api/products', (_req: Request, res: Response) => {
+app.get('/api/products', (req: Request, res: Response) => {
   const products = loadProducts();
-  res.json({ products });
+  const includeUnpublished = req.query.all === 'true' || req.query.admin === 'true';
+  const result = includeUnpublished ? products : products.filter((p: any) => p.isPublished !== false);
+  res.json({ products: result });
 });
 
 app.post('/api/products', (req: Request, res: Response) => {
   try {
     const newProduct = req.body;
-    if (!newProduct || !newProduct.title) {
-      return res.status(400).json({ error: 'اسم المنتج مطلوب' });
+    if (!newProduct || !newProduct.name) {
+      return res.status(400).json({ error: 'Product name is required.' });
     }
-    const current = loadProducts() || [];
-    current.unshift(newProduct);
+    const current = loadProducts();
+    const productToSave = {
+      ...newProduct,
+      id: newProduct.id || `prod-f${Date.now()}`,
+      createdAt: newProduct.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    current.unshift(productToSave);
     saveProducts(current);
-    res.json({ success: true, product: newProduct });
+    res.status(201).json({ success: true, product: productToSave });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/products/:id', (req: Request, res: Response) => {
+const handleUpdateProduct = (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id || (req.query.id as string) || req.body?.id;
+    if (!id) {
+      return res.status(400).json({ error: 'Product ID is required for update' });
+    }
     const updated = req.body;
-    let current = loadProducts() || [];
-    current = current.map((p: any) => (p.id === id ? { ...p, ...updated, updatedAt: new Date().toISOString() } : p));
+    let current = loadProducts();
+    current = current.map((p: any) =>
+      p.id === id ? { ...p, ...updated, updatedAt: new Date().toISOString() } : p
+    );
     saveProducts(current);
     res.json({ success: true, product: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
+};
 
-app.delete('/api/products/:id', async (req: Request, res: Response) => {
+const handleDeleteProduct = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    let current = loadProducts() || [];
+    const id = req.params.id || (req.query.id as string) || req.body?.id;
+    if (!id) {
+      return res.status(400).json({ error: 'Product ID is required for deletion' });
+    }
+    let current = loadProducts();
     const productToDelete = current.find((p: any) => p.id === id);
 
-    // If product has Vercel Blob images, delete them from Vercel Blob as well
+    // Delete images from Vercel Blob if available
     const token = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
     if (productToDelete?.images?.length && token) {
       for (const img of productToDelete.images) {
@@ -315,7 +346,7 @@ app.delete('/api/products/:id', async (req: Request, res: Response) => {
           try {
             await del(img.url, { token: token.trim() });
           } catch (e) {
-            console.warn('Failed to delete blob during product deletion:', e);
+            console.warn('Could not delete blob image:', e);
           }
         }
       }
@@ -323,28 +354,24 @@ app.delete('/api/products/:id', async (req: Request, res: Response) => {
 
     current = current.filter((p: any) => p.id !== id);
     saveProducts(current);
-    res.json({ success: true, message: 'تم حذف المنتج بنجاح' });
+    res.json({ success: true, message: 'Product deleted from database successfully.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
+};
 
-app.post('/api/products/save-all', (req: Request, res: Response) => {
-  try {
-    const { products } = req.body;
-    if (Array.isArray(products)) {
-      saveProducts(products);
-      res.json({ success: true });
-    } else {
-      res.status(400).json({ error: 'البيانات غير صالحة' });
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+app.put('/api/products', handleUpdateProduct);
+app.put('/api/products/:id', handleUpdateProduct);
+app.delete('/api/products', handleDeleteProduct);
+app.delete('/api/products/:id', handleDeleteProduct);
+
+app.post('/api/products/reset', (_req: Request, res: Response) => {
+  saveProducts(INITIAL_FURNITURE_PRODUCTS);
+  res.json({ success: true, products: INITIAL_FURNITURE_PRODUCTS });
 });
 
 // -------------------------------------------------------------
-// Dev & Production Server integration
+// Vite Server Integration (SPA dev & prod)
 // -------------------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -363,7 +390,7 @@ async function startServer() {
   }
 
   app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`Furniture Store server running on port ${PORT}`);
   });
 }
 
