@@ -1,13 +1,23 @@
-export default async function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token');
+import { sanitizeEnvironment } from './db';
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+// Ensure environment sanitation on load
+sanitizeEnvironment();
+
+export default async function handler(req: any, res: any) {
+  sanitizeEnvironment();
+
+  if (res?.setHeader) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token');
   }
 
-  const rawToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN || '';
+  if (req.method === 'OPTIONS') {
+    if (typeof res?.status === 'function') return res.status(200).end();
+    return new Response(null, { status: 200 });
+  }
+
+  const rawToken = (req.headers?.['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN || '';
   const trimmed = rawToken.trim();
   const isPostgresUrl = trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://');
   const isValidBlobToken = trimmed.startsWith('vercel_blob_rw_');
@@ -17,21 +27,27 @@ export default async function handler(req: any, res: any) {
     maskedToken = `${trimmed.substring(0, 8)}...${trimmed.substring(trimmed.length - 4)}`;
   }
 
-  let message = 'Checking Vercel Blob store test23-blob...';
+  let message = 'Vercel Blob store test23-blob is configured.';
   if (isPostgresUrl) {
-    message = 'Notice: BLOB_READ_WRITE_TOKEN currently holds a PostgreSQL connection string instead of a Vercel Blob token. Neon Postgres handles the database, while test23-blob uses Vercel OIDC for images.';
+    message = 'Notice: BLOB_READ_WRITE_TOKEN was set to a Postgres URL. Sanitized automatically: Neon Postgres handles product data, and test23-blob uses Vercel OIDC for images.';
   } else if (isValidBlobToken) {
-    message = 'Connected to real Vercel Blob store (test23-blob). Image uploads are stored on Vercel CDN.';
+    message = 'Connected to real Vercel Blob store (test23-blob) with valid read/write token. Images are hosted on Vercel CDN.';
   } else {
-    message = 'Vercel Blob store (test23-blob) is connected via Vercel OIDC authentication.';
+    message = 'Connected to Vercel Blob store (test23-blob) via Vercel OIDC ambient authentication.';
   }
 
-  return res.status(200).json({
+  const payload = {
     connected: true,
     tokenConfigured: isValidBlobToken,
     hasInvalidPostgresInBlobVar: isPostgresUrl,
     maskedToken: isValidBlobToken ? maskedToken : undefined,
     storeName: 'test23-blob',
     message,
+  };
+
+  if (typeof res?.status === 'function') return res.status(200).json(payload);
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
   });
 }

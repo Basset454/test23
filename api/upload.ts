@@ -1,5 +1,9 @@
 import { put } from '@vercel/blob';
 import busboy from 'busboy';
+import { sanitizeEnvironment } from './db';
+
+// Ensure environment sanitation on load
+sanitizeEnvironment();
 
 // Disable default Vercel bodyParser so raw stream can be parsed without truncation or corruption
 export const config = {
@@ -18,13 +22,6 @@ function sanitizeBlobToken(rawToken?: string): string | undefined {
     return undefined;
   }
   return trimmed;
-}
-
-function neutralizeInvalidBlobEnv() {
-  const envToken = process.env.BLOB_READ_WRITE_TOKEN;
-  if (envToken && (envToken.startsWith('postgres://') || envToken.startsWith('postgresql://'))) {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-  }
 }
 
 function parseNodeMultipart(req: any): Promise<{ buffer: Buffer; filename: string; mimetype: string }> {
@@ -70,7 +67,7 @@ function readNodeStream(req: any): Promise<Buffer> {
 }
 
 export default async function handler(req: any, res: any) {
-  neutralizeInvalidBlobEnv();
+  sanitizeEnvironment();
 
   // CORS headers
   if (res?.setHeader) {
@@ -86,7 +83,7 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const explicitToken = req.headers.get('x-blob-token') || process.env.BLOB_READ_WRITE_TOKEN;
+      const explicitToken = req.headers?.get('x-blob-token') || process.env.BLOB_READ_WRITE_TOKEN;
       const token = sanitizeBlobToken(explicitToken);
 
       const form = await req.formData();
@@ -98,11 +95,13 @@ export default async function handler(req: any, res: any) {
       const cleanFilename = possibleFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const pathname = `products/${Date.now()}-${cleanFilename}`;
 
-      const blob = await put(pathname, possibleFile, {
-        access: 'public',
-        token,
+      const putOptions = {
+        access: 'public' as const,
         contentType: possibleFile.type || 'image/jpeg',
-      });
+        ...(token ? { token } : {}),
+      };
+
+      const blob = await put(pathname, possibleFile, putOptions);
 
       return new Response(
         JSON.stringify({
@@ -162,11 +161,13 @@ export default async function handler(req: any, res: any) {
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const pathname = `products/${Date.now()}-${cleanFilename}`;
 
-    const blob = await put(pathname, fileBuffer, {
-      access: 'public',
-      token,
+    const putOptions = {
+      access: 'public' as const,
       contentType,
-    });
+      ...(token ? { token } : {}),
+    };
+
+    const blob = await put(pathname, fileBuffer, putOptions);
 
     return res.status(200).json({
       success: true,

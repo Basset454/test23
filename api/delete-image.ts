@@ -1,4 +1,8 @@
 import { del } from '@vercel/blob';
+import { sanitizeEnvironment } from './db';
+
+// Ensure environment sanitation on load
+sanitizeEnvironment();
 
 function sanitizeBlobToken(rawToken?: string): string | undefined {
   if (!rawToken || typeof rawToken !== 'string') return undefined;
@@ -12,40 +16,70 @@ function sanitizeBlobToken(rawToken?: string): string | undefined {
   return trimmed;
 }
 
-function neutralizeInvalidBlobEnv() {
-  const envToken = process.env.BLOB_READ_WRITE_TOKEN;
-  if (envToken && (envToken.startsWith('postgres://') || envToken.startsWith('postgresql://'))) {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-  }
-}
-
 export default async function handler(req: any, res: any) {
-  neutralizeInvalidBlobEnv();
+  sanitizeEnvironment();
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'DELETE, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token');
+  if (res?.setHeader) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'DELETE, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-blob-token');
+  }
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    if (typeof res?.status === 'function') return res.status(200).end();
+    return new Response(null, { status: 200 });
   }
 
-  const rawToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  const rawToken = (req.headers?.['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
   const token = sanitizeBlobToken(rawToken);
 
   try {
-    const url = req.body?.url || (req.query?.url as string);
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        // ignore
+      }
+    } else if (!body && typeof req.json === 'function') {
+      try {
+        body = await req.json();
+      } catch {
+        // ignore
+      }
+    }
+
+    const url = body?.url || (req.query?.url as string);
     if (!url) {
-      return res.status(400).json({ error: 'Image URL is required for deletion' });
+      const errBody = { error: 'Image URL is required for deletion' };
+      if (typeof res?.status === 'function') return res.status(400).json(errBody);
+      return new Response(JSON.stringify(errBody), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     if (url.includes('blob.vercel-storage.com')) {
-      await del(url, { token });
+      const delOptions: Record<string, any> = {};
+      if (token) {
+        delOptions.token = token;
+      }
+      await del(url, delOptions);
     }
 
-    return res.status(200).json({ success: true, message: 'Image deleted from Vercel Blob', url });
+    const okBody = { success: true, message: 'Image deleted from Vercel Blob', url };
+    if (typeof res?.status === 'function') return res.status(200).json(okBody);
+    return new Response(JSON.stringify(okBody), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (error: any) {
     console.error('Delete image error:', error);
-    return res.status(500).json({ error: error.message || 'Failed to delete image' });
+    const errBody = { error: error.message || 'Failed to delete image' };
+    if (typeof res?.status === 'function') return res.status(500).json(errBody);
+    return new Response(JSON.stringify(errBody), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }

@@ -1,4 +1,7 @@
+import dotenv from 'dotenv';
 import { neon } from '@neondatabase/serverless';
+
+dotenv.config();
 
 export interface ProductImage {
   id: string;
@@ -121,40 +124,65 @@ export const INITIAL_PRODUCTS: Product[] = [
 let tableInitialized = false;
 
 /**
- * Returns a valid Neon PostgreSQL connection string.
- * Strictly verifies that the URL starts with postgres:// or postgresql://.
- * Also gracefully handles if the Neon connection string was mistakenly pasted into BLOB_READ_WRITE_TOKEN.
+ * Sanitizes environment variables:
+ * - If BLOB_READ_WRITE_TOKEN mistakenly contains a Postgres connection string,
+ *   we recover it into POSTGRES_URL / DATABASE_URL and delete it from BLOB_READ_WRITE_TOKEN.
+ * - This prevents @vercel/blob from crashing due to an invalid token format.
  */
-export function getDatabaseUrl(): string | undefined {
-  const direct =
-    process.env.POSTGRES_URL ||
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_PRISMA_URL ||
-    process.env.POSTGRES_URL_NON_POOLING;
-
-  if (direct && typeof direct === 'string') {
-    const trimmed = direct.trim().replace(/^['"]|['"]$/g, '');
-    if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
-      return trimmed;
-    }
-  }
-
-  // Graceful recovery: if the Neon Postgres URL was accidentally set in BLOB_READ_WRITE_TOKEN
+export function sanitizeEnvironment() {
   const blobVar = process.env.BLOB_READ_WRITE_TOKEN;
   if (blobVar && typeof blobVar === 'string') {
     const trimmed = blobVar.trim().replace(/^['"]|['"]$/g, '');
     if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
-      return trimmed;
+      if (!process.env.POSTGRES_URL) {
+        process.env.POSTGRES_URL = trimmed;
+      }
+      if (!process.env.DATABASE_URL) {
+        process.env.DATABASE_URL = trimmed;
+      }
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+    }
+  }
+}
+
+// Run immediately upon module load
+sanitizeEnvironment();
+
+/**
+ * Returns a valid Neon PostgreSQL connection string.
+ * Strictly verifies that the URL starts with postgres:// or postgresql://.
+ */
+export function getDatabaseUrl(): string | undefined {
+  sanitizeEnvironment();
+
+  const candidates = [
+    process.env.POSTGRES_URL,
+    process.env.DATABASE_URL,
+    process.env.POSTGRES_PRISMA_URL,
+    process.env.POSTGRES_URL_NON_POOLING,
+  ];
+
+  for (const direct of candidates) {
+    if (direct && typeof direct === 'string') {
+      const trimmed = direct.trim().replace(/^['"]|['"]$/g, '');
+      if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
+        return trimmed;
+      }
     }
   }
 
   return undefined;
 }
 
+let cachedSql: any = null;
+
 export function getSqlClient() {
   const url = getDatabaseUrl();
   if (!url) return null;
-  return neon(url);
+  if (!cachedSql) {
+    cachedSql = neon(url);
+  }
+  return cachedSql;
 }
 
 export function mapRowToProduct(row: any): Product {
@@ -337,4 +365,70 @@ export async function deleteNeonProduct(id: string): Promise<boolean | null> {
 
   await sql`DELETE FROM products WHERE id = ${id};`;
   return true;
+}
+
+/**
+ * Default export handler for /api/db endpoint.
+ * Acts as a health-check and diagnostics endpoint without revealing secrets.
+ */
+export default async function handler(req: any, res: any) {
+  if (res?.setHeader) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (typeof res?.status === 'function') return res.status(200).end();
+    return new Response(null, { status: 200 });
+  }
+
+  const dbConfigured = Boolean(getDatabaseUrl());
+  if (!dbConfigured) {
+    const errorBody = {
+      status: 'error',
+      database: 'neon_postgres',
+      connected: false,
+      message: 'POSTGRES_URL environment variable is not configured.',
+    };
+    if (typeof res?.status === 'function') return res.status(503).json(errorBody);
+    return new Response(JSON.stringify(errorBody), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  try {
+    const sql = getSqlClient();
+    const testResult = await sql`SELECT 1 as connected, current_database() as db_name;`;
+    const countResult = await sql`SELECT COUNT(*)::int as count FROM products;`;
+    const count = countResult[0]?.count || 0;
+
+    const data = {
+      status: 'healthy',
+      database: 'neon_postgres',
+      connected: Boolean(testResult[0]?.connected),
+      productCount: count,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (typeof res?.status === 'function') return res.status(200).json(data);
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err: any) {
+    const errorBody = {
+      status: 'error',
+      database: 'neon_postgres',
+      connected: false,
+      message: 'Failed to connect to Neon Postgres database.',
+      details: err.message || 'Unknown database error',
+    };
+    if (typeof res?.status === 'function') return res.status(500).json(errorBody);
+    return new Response(JSON.stringify(errorBody), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

@@ -44,6 +44,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 }) => {
   const [isTokenSettingsOpen, setIsTokenSettingsOpen] = useState(false);
   const [tokenInput, setTokenInput] = useState(getCustomBlobToken());
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   // Determine current view
   const isNewView = currentAdminSubpath === '/admin/products/new';
@@ -61,7 +62,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleSaveToken = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCustomBlobToken(tokenInput);
+    const trimmed = tokenInput.trim();
+    if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
+      setTokenError(
+        'Warning: You entered a PostgreSQL database connection string. Neon PostgreSQL manages product records and is configured via POSTGRES_URL. Vercel Blob tokens must start with "vercel_blob_rw_".'
+      );
+      return;
+    }
+    if (trimmed.length > 0 && !trimmed.startsWith('vercel_blob_rw_')) {
+      setTokenError('Invalid token format: Vercel Blob read/write tokens start with "vercel_blob_rw_".');
+      return;
+    }
+    setTokenError(null);
+    setCustomBlobToken(trimmed);
     await onRefreshBlobStatus();
     setIsTokenSettingsOpen(false);
   };
@@ -386,10 +399,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <input
                   type="password"
                   value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value)}
+                  onChange={(e) => {
+                    setTokenInput(e.target.value);
+                    if (tokenError) setTokenError(null);
+                  }}
                   placeholder="vercel_blob_rw_xxxxxxxxxxxxxxxx"
                   className="w-full px-3.5 py-2.5 text-xs font-mono rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-900"
                 />
+                {tokenError && (
+                  <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                    <span>{tokenError}</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
