@@ -10,8 +10,7 @@ import {
   RotateCcw,
   Sparkles,
   Layers,
-  ArrowRight,
-  Database
+  ArrowRight
 } from 'lucide-react';
 import { Product, BlobStatus } from '../types';
 import { AdminProductForm } from './AdminProductForm';
@@ -65,7 +64,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     const trimmed = tokenInput.trim();
     if (trimmed.startsWith('postgres://') || trimmed.startsWith('postgresql://')) {
       setTokenError(
-        'Warning: You entered a PostgreSQL database connection string. Neon PostgreSQL manages product records and is configured via POSTGRES_URL. Vercel Blob tokens must start with "vercel_blob_rw_".'
+        'Warning: You entered a PostgreSQL database connection string. Vercel Blob tokens must start with "vercel_blob_rw_".'
       );
       return;
     }
@@ -90,21 +89,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               Admin Portal
             </span>
             <span className="text-stone-600">•</span>
-            <span className="text-xs text-cyan-400 font-semibold flex items-center gap-1 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-800">
-              <Database className="w-3.5 h-3.5" />
-              Neon Postgres
-            </span>
-            <span className="text-stone-600">•</span>
             <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-800">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              test23-blob
+              test23-blob (_database/products.json)
             </span>
           </div>
           <h1 className="text-2xl font-serif font-bold text-white">
             Trust Furniture Admin
           </h1>
           <p className="text-xs text-stone-400">
-            Authoritative product metadata stored in Neon Postgres. Product images stored in Vercel Blob.
+            Authoritative product data & image storage powered by connected Vercel Blob (test23-blob).
           </p>
         </div>
 

@@ -1,8 +1,4 @@
 import { del } from '@vercel/blob';
-import { sanitizeEnvironment } from './db';
-
-// Ensure environment sanitation on load
-sanitizeEnvironment();
 
 function sanitizeBlobToken(rawToken?: string): string | undefined {
   if (!rawToken || typeof rawToken !== 'string') return undefined;
@@ -16,8 +12,22 @@ function sanitizeBlobToken(rawToken?: string): string | undefined {
   return trimmed;
 }
 
+function neutralizeInvalidBlobEnv() {
+  const envToken = process.env.BLOB_READ_WRITE_TOKEN;
+  if (
+    envToken &&
+    (envToken.startsWith('postgres://') ||
+      envToken.startsWith('postgresql://') ||
+      !envToken.startsWith('vercel_blob_rw_'))
+  ) {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+  }
+}
+
+neutralizeInvalidBlobEnv();
+
 export default async function handler(req: any, res: any) {
-  sanitizeEnvironment();
+  neutralizeInvalidBlobEnv();
 
   if (res?.setHeader) {
     res.setHeader('Access-Control-Allow-Origin', '*');

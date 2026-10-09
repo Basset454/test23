@@ -1,9 +1,5 @@
 import { put } from '@vercel/blob';
 import busboy from 'busboy';
-import { sanitizeEnvironment } from './db';
-
-// Ensure environment sanitation on load
-sanitizeEnvironment();
 
 // Disable default Vercel bodyParser so raw stream can be parsed without truncation or corruption
 export const config = {
@@ -23,6 +19,20 @@ function sanitizeBlobToken(rawToken?: string): string | undefined {
   }
   return trimmed;
 }
+
+function neutralizeInvalidBlobEnv() {
+  const envToken = process.env.BLOB_READ_WRITE_TOKEN;
+  if (
+    envToken &&
+    (envToken.startsWith('postgres://') ||
+      envToken.startsWith('postgresql://') ||
+      !envToken.startsWith('vercel_blob_rw_'))
+  ) {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+  }
+}
+
+neutralizeInvalidBlobEnv();
 
 function parseNodeMultipart(req: any): Promise<{ buffer: Buffer; filename: string; mimetype: string }> {
   return new Promise((resolve, reject) => {
@@ -67,7 +77,7 @@ function readNodeStream(req: any): Promise<Buffer> {
 }
 
 export default async function handler(req: any, res: any) {
-  sanitizeEnvironment();
+  neutralizeInvalidBlobEnv();
 
   // CORS headers
   if (res?.setHeader) {
@@ -83,7 +93,7 @@ export default async function handler(req: any, res: any) {
     }
 
     try {
-      const explicitToken = req.headers?.get('x-blob-token') || process.env.BLOB_READ_WRITE_TOKEN;
+      const explicitToken = req.headers?.get?.('x-blob-token') || process.env.BLOB_READ_WRITE_TOKEN;
       const token = sanitizeBlobToken(explicitToken);
 
       const form = await req.formData();
@@ -133,11 +143,11 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const explicitToken = (req.headers['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
+  const explicitToken = (req.headers?.['x-blob-token'] as string) || process.env.BLOB_READ_WRITE_TOKEN;
   const token = sanitizeBlobToken(explicitToken);
 
   try {
-    const rawContentType = (req.headers['content-type'] as string) || '';
+    const rawContentType = (req.headers?.['content-type'] as string) || '';
     let fileBuffer: Buffer;
     let filename: string;
     let contentType: string;

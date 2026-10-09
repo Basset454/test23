@@ -53,7 +53,7 @@ export function setCustomBlobToken(token: string): void {
 }
 
 // -------------------------------------------------------------
-// Real Server Database APIs (Powered by Neon Postgres)
+// Real Server Database APIs (Persistent in Vercel Blob _database/products.json)
 // -------------------------------------------------------------
 export async function getProducts(forAdmin = false): Promise<Product[]> {
   const sessionToken = getAdminToken();
